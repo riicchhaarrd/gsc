@@ -1,0 +1,198 @@
+
+extern bool;
+extern int;
+extern ASTNodePtr;
+// extern ASTExpr;
+// extern ASTStmt;
+extern ASTLiteralValue;
+
+#prefix "AST"
+
+// Generic
+
+// struct Expression
+// {
+// 	int unused;
+// };
+// struct Statement
+// {
+// 	int unused;
+// };
+
+// Expressions
+struct ArrayExpr
+{
+	public:
+	ASTNodePtr elements[?];
+};
+struct AssignmentExpr
+{
+	public:
+	ASTNodePtr lhs;
+	ASTNodePtr rhs;
+	uint32 op;
+};
+struct BinaryExpr
+{
+	public:
+	ASTNodePtr lhs;
+	ASTNodePtr rhs;
+	uint32 op;
+};
+struct CallExpr
+{
+	public:
+	bool threaded = false;
+	bool pointer = false;
+	ASTNodePtr object;
+	ASTNodePtr callee;
+	ASTNodePtr arguments[?];
+};
+struct ConditionalExpr
+{
+	public:
+	ASTNodePtr condition;
+	ASTNodePtr consequent;
+	ASTNodePtr alternative;
+};
+struct FunctionPtr
+{
+	public:
+	char function_name[256];
+};
+struct Identifier
+{
+	public:
+	char file_reference[256];
+	char name[256];
+};
+
+enum LiteralType
+{
+	String,
+	Integer,
+	Boolean,
+	Float,
+	Vector,
+	Animation,
+	Undefined
+};
+
+struct Literal
+{
+	public:
+	uint32 type;
+	ASTLiteralValue value;
+};
+struct LocalizedString
+{
+	public:
+	char reference[256];
+};
+struct MemberExpr
+{
+	public:
+	ASTNodePtr object;
+	ASTNodePtr prop;
+	uint32 op;
+};
+struct UnaryExpr
+{
+	public:
+	ASTNodePtr argument;
+	uint32 op;
+	bool prefix;
+};
+struct VectorExpr
+{
+	public:
+	ASTNodePtr elements[?];
+};
+
+// Statements
+
+struct BlockStmt
+{
+	public:
+	ASTNodePtr body[?];
+};
+struct BreakStmt
+{
+	public:
+	int unused;
+};
+struct ContinueStmt
+{
+	public:
+	int unused;
+};
+struct DoWhileStmt
+{
+	public:
+	ASTNodePtr test;
+	ASTNodePtr body;
+};
+struct EmptyStmt
+{
+	public:
+	int unused;
+};
+struct ExprStmt
+{
+	public:
+	ASTNodePtr expression;
+};
+struct ForStmt
+{
+	public:
+	ASTNodePtr init; // init-statement
+	ASTNodePtr test;
+	ASTNodePtr update;
+	ASTNodePtr body;
+};
+struct IfStmt
+{
+	public:
+	ASTNodePtr test;
+	ASTNodePtr consequent;
+	ASTNodePtr alternative;
+};
+struct ReturnStmt
+{
+	public:
+	ASTNodePtr argument;
+};
+struct SwitchCase
+{
+	public:
+	ASTNodePtr test;
+	ASTNodePtr consequent[?];
+};
+struct SwitchStmt
+{
+	public:
+	ASTNodePtr discriminant;
+	ASTSwitchCase cases[?];
+};
+struct WaitStmt
+{
+	public:
+	ASTNodePtr duration;
+};
+struct WaitTillFrameEndStmt
+{
+	public:
+	int unused;
+};
+struct WhileStmt
+{
+	public:
+	ASTNodePtr test;
+	ASTNodePtr body;
+};
+
+// union ASTNodeData
+// {
+// 	int32 a;
+// 	int32 b;
+// }
