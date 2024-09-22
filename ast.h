@@ -28,11 +28,12 @@ typedef union
 #define AST_ENUM(UPPER, TYPE, LOWER) UPPER,
 enum
 {
-	AST_X_MACRO(AST_ENUM) AST_INVALID
+	AST_INVALID,
+	AST_X_MACRO(AST_ENUM) AST_MAX
 };
 
 #define AST_STRINGS(UPPER, TYPE, LOWER) #TYPE,
-static const char *ast_node_names[] = { AST_X_MACRO(AST_STRINGS) NULL };
+static const char *ast_node_names[] = { "invalid", AST_X_MACRO(AST_STRINGS) NULL };
 
 #define AST_FIELD_DATA(UPPER, TYPE, LOWER) TYPE LOWER##_data;
 struct ASTNode
