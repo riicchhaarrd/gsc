@@ -130,12 +130,6 @@ ASTNode *nud_literal(Parser *parser, Token *t)
 	return NULL;
 }
 
-ASTNode *nud_unary(Parser *parser, Token *token)
-{
-	lexer_error(parser->lexer, "TODO %s", __FUNCTION__);
-	return NULL;
-}
-
 ASTNode *led_binary(Parser *parser, ASTNode *left, Token *token, int bp)
 {
     NODE(BinaryExpr, n);
@@ -181,7 +175,8 @@ ASTNode *led_function(Parser *parser, ASTNode *left, Token *token, int bp)
 	// Stream *s = parser->lexer->stream;
 	// int64_t current = s->tell(s);
 	size_t cap = 16;
-	n->arguments = malloc(sizeof(ASTNodePtr) * cap);
+	n->callee = left;
+	n->arguments = malloc(sizeof(ASTNode*) * cap);
 	size_t nargs = 0;
 	if(parser->token.type != ')')
 	{
@@ -221,6 +216,7 @@ ASTNode *nud_group(Parser *parser, Token *token)
 	{
 		lexer_error(parser->lexer, "Expected ) after left paren");
 	}
+	advance(parser, ')');
 	return (ASTNode*)n;
 }
 
@@ -246,6 +242,8 @@ ASTNode *led_ternary(Parser *parser, ASTNode *left, Token *token, int bp)
 	n->alternative = parse_expression(parser, 0);
 	return (ASTNode *)n;
 }
+
+ASTNode *nud_unary(Parser *parser, Token *token);
 
 static const Operator operator_table[TK_MAX] = {
 	[TK_PLUS] = { 50, LEFT_ASSOC, NULL, led_binary },
@@ -295,6 +293,15 @@ static const Operator operator_table[TK_MAX] = {
 	[TK_UNDEFINED] = { 0, LEFT_ASSOC, nud_literal, NULL },
 };
 
+ASTNode *nud_unary(Parser *parser, Token *token)
+{
+    NODE(UnaryExpr, n);
+    n->argument = parse_expression(parser, operator_table[token->type].precedence);
+    n->op = token->type;
+	n->prefix = true;
+	return (ASTNode *)n;
+}
+
 ASTNode *parse_nud(Parser *parser, Token *token)
 {
 	const Operator *op = &operator_table[token->type];
@@ -304,7 +311,6 @@ ASTNode *parse_nud(Parser *parser, Token *token)
 	{
 		return op->nud(parser, token);
 	}
-	char type[64];
 	lexer_error(parser->lexer,
 				"Error: Unexpected token in nud for '%s'\n",
 				token_type_to_string(token->type, type, sizeof(type)));
@@ -323,7 +329,6 @@ ASTNode *parse_led(Parser *parser, ASTNode *left, Token *token, int bp)
 	{
 		return op->led(parser, left, token, bp);
 	}
-	char type[64];
 	lexer_error(parser->lexer,
 				"Error: Unexpected token in led for '%s'\n",
 				token_type_to_string(token->type, type, sizeof(type)));
