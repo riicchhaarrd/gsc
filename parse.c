@@ -23,6 +23,18 @@ skipping over the irrelevant precedence levels.
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <stdarg.h>
+
+static void DEBUG(const char *fmt, ...)
+{
+	char message[2048];
+	va_list va;
+	va_start(va, fmt);
+	vsnprintf(message, sizeof(message), fmt, va);
+	va_end(va);
+	printf("[DEBUG] %s\n", message);
+	// abort();
+}
 
 static ASTNode *boolean(Parser *parser, bool b)
 {
@@ -286,6 +298,8 @@ static const Operator operator_table[TK_MAX] = {
 ASTNode *parse_nud(Parser *parser, Token *token)
 {
 	const Operator *op = &operator_table[token->type];
+	char type[64];
+	DEBUG("parse_nud(parser, token = '%s')", token_type_to_string(token->type, type, sizeof(type)));
 	if(op->nud)
 	{
 		return op->nud(parser, token);
@@ -300,6 +314,11 @@ ASTNode *parse_nud(Parser *parser, Token *token)
 ASTNode *parse_led(Parser *parser, ASTNode *left, Token *token, int bp)
 {
 	const Operator *op = &operator_table[token->type];
+	char type[64];
+	DEBUG("parse_led(parser, left = %s, token = '%s', bp = %d)",
+		  ast_node_names[left->type],
+		  token_type_to_string(token->type, type, sizeof(type)),
+		  bp);
 	if(op->led)
 	{
 		return op->led(parser, left, token, bp);
