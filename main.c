@@ -1,9 +1,12 @@
 #define AST_VISITOR_IMPLEMENTATION
-#include "../ast.h"
+#include "ast.h"
 #include "parse.h"
 #include <assert.h>
+#include "visitor.h"
 
-#define DISK
+static ASTVisitor visitor;
+
+// #define DISK
 
 #define AST_VISITORS(UPPER, TYPE, LOWER) [UPPER] = (AstVisitorFn)TYPE ## _visit,
 
@@ -122,18 +125,20 @@ static void syntax_error(Parser *parser, const char *fmt, ...)
 
 static ASTNode *expression(Parser *parser)
 {
+	// parser->token.type = 0;
 	// lexer_step(parser->lexer, &parser->token);
 	ASTNodePtr node = parse_expression(parser, 0);
 
-	size_t depth = 0;
-	AstVisitor visitor;
-	type_ast_visitor_init(&visitor, &depth);
-	visitor.visit_ASTNodePtr = (AstVisitorFn)visit_ASTNodePtr;
-	visitor.visit_char = (AstVisitorFn)visit_char;
-	visitor.visit_uint32 = (AstVisitorFn)visit_uint32;
-	visitor.visit_int = (AstVisitorFn)visit_int;
-	visitor.visit_bool = (AstVisitorFn)visit_bool;
-	visit_ASTNodePtr(&visitor, NULL, &node, 1, 0);
+	// size_t depth = 0;
+	// AstVisitor visitor;
+	// type_ast_visitor_init(&visitor, &depth);
+	// visitor.visit_ASTNodePtr = (AstVisitorFn)visit_ASTNodePtr;
+	// visitor.visit_char = (AstVisitorFn)visit_char;
+	// visitor.visit_uint32 = (AstVisitorFn)visit_uint32;
+	// visitor.visit_int = (AstVisitorFn)visit_int;
+	// visitor.visit_bool = (AstVisitorFn)visit_bool;
+	// visit_ASTNodePtr(&visitor, NULL, &node, 1, 0);
+	visit_node(&visitor, node);
 	return node;
 }
 
@@ -162,6 +167,19 @@ static ASTNode *statement(Parser *parser)
 			{
 				if_stmt->consequent = statement(parser);
 			}
+			if(parser->token.type == TK_ELSE)
+			{
+				advance(parser, TK_ELSE);
+				if(parser->token.type == '{')
+				{
+					advance(parser, '{');
+					if_stmt->consequent = block(parser);
+				}
+				else
+				{
+					if_stmt->consequent = statement(parser);
+				}
+			}
 		}
 		break;
 
@@ -179,6 +197,7 @@ static ASTNode* block(Parser *parser)
 	while(parser->token.type != '}')
 	{
 		ASTNode *stmt = statement(parser);
+		// visit_node(&visitor, stmt);
 		assert(stmt);
 		// printf("statement(%s) ", ast_node_names[stmt->type]);
 		// dump_token(parser->lexer, &parser->token);
@@ -194,8 +213,10 @@ static ASTNode* block(Parser *parser)
 static void parse(Parser *parser)
 {
 	// while(lexer_step(parser->lexer, &parser->token))
-	while(1)
+	char type[64];
+	while(parser->token.type != 0)
 	{
+		// printf("%s\n", token_type_to_string(parser->token.type, type, sizeof(type)));
 		switch(parser->token.type)
 		{
 			case '#':
@@ -228,7 +249,8 @@ static void parse(Parser *parser)
 				advance(parser, ')');
 				// lexer_step(parser->lexer, &parser->token);
 				advance(parser, '{');
-				block(parser);
+				ASTNode *body = block(parser);
+				visit_node(&visitor, body);
 			}
 			break;
 #endif
@@ -308,9 +330,129 @@ static void parse_file(const char *path)
     // 	parse_line(line);
 	// }
 }
+#define IMPL_VISIT(TYPE) static void visit_##TYPE##_(ASTVisitor *v, ASTNode *ast_node, TYPE *n)
+
+static void print_operator(int op)
+{
+	// printf("op:%d\n",op);
+	if(op < 255)
+		printf("%c", op & 0xff);
+	else
+	{
+		static const char *operators[TK_MAX] = {
+			[TK_LSHIFT] = "<<",		 [TK_RSHIFT] = ">>",		 [TK_LOGICAL_AND] = "&&",
+			[TK_LOGICAL_OR] = "||",	 [TK_RSHIFT_ASSIGN] = ">>=", [TK_LSHIFT_ASSIGN] = "<<=",
+			[TK_AND_ASSIGN] = "&=",	 [TK_OR_ASSIGN] = "|=",		 [TK_INCREMENT] = "++",
+			[TK_DECREMENT] = "--",	 [TK_DIV_ASSIGN] = "/=",	 [TK_MUL_ASSIGN] = "*=",
+			[TK_MOD_ASSIGN] = "%=",	 [TK_XOR_ASSIGN] = "^=",	 [TK_MINUS_ASSIGN] = "-=",
+			[TK_PLUS_ASSIGN] = "+=", [TK_EQUAL] = "==",			 [TK_NEQUAL] = "!=",
+			[TK_GEQUAL] ">=",		 [TK_LEQUAL] = "<=",		 NULL
+		};
+		printf("%s", operators[op] ? operators[op] : "?");
+	}
+}
+IMPL_VISIT(ASTMemberExpr)
+{
+	visit_node(v, n->object);
+	print_operator(n->op);
+	visit_node(v, n->prop);
+}
+IMPL_VISIT(ASTLocalizedString)
+{
+	printf("%s", n->reference);
+}
+IMPL_VISIT(ASTUnaryExpr)
+{
+	printf("%c", n->op < 255 ? n->op : '?');
+	visit_node(v, n->argument);
+}
+IMPL_VISIT(ASTExprStmt)
+{
+	visit_node(v, n->expression);
+	printf(";");
+}
+IMPL_VISIT(ASTLiteral)
+{
+	switch(n->type)
+	{
+		case AST_LITERAL_TYPE_FLOAT:
+		{
+			printf("%f", n->value.number);
+		}
+		break;
+		case AST_LITERAL_TYPE_BOOLEAN:
+		{
+			printf("%s", n->value.boolean ? "true" : "false");
+		}
+		break;
+		case AST_LITERAL_TYPE_INTEGER:
+		{
+			printf("%d", n->value.integer);
+		}
+		break;
+		case AST_LITERAL_TYPE_STRING:
+		{
+			printf("%s", n->value.string);
+		}
+		break;
+		default:
+		{
+			printf("unhandled literal %d", n->type);
+			exit(-1);
+		}
+		break;
+	}
+}
+IMPL_VISIT(ASTBinaryExpr)
+{
+	visit_node(v, n->lhs);
+	print_operator(n->op);
+	visit_node(v, n->rhs);
+}
+IMPL_VISIT(ASTBlockStmt)
+{
+	printf("{\n");
+	for(size_t i = 0; i < n->numbody; ++i)
+	{
+		visit_node(v, n->body[i]);
+	}
+	printf("}\n");
+}
+IMPL_VISIT(ASTIdentifier)
+{
+	printf("%s", n->name);
+	if(n->file_reference[0] != 0)
+		printf("::%s", n->file_reference);
+}
+IMPL_VISIT(ASTCallExpr)
+{
+	visit_node(v, n->callee);
+	printf("(");
+	for(size_t i = 0; i < n->numarguments; ++i)
+	{
+		visit_node(v, n->arguments[i]);
+	}
+	printf(")");
+}
+static void visit_fallback(ASTVisitor *v, ASTNode *n, const char *type)
+{
+	printf("Node '%s' not implemented\n", type);
+	exit(-1);
+}
 
 int main(int argc, char **argv)
 {
+	visitor.visit_fallback = visit_fallback;
+	visitor.visit_ast_block_stmt = visit_ASTBlockStmt_;
+	visitor.visit_ast_call_expr = visit_ASTCallExpr_;
+	visitor.visit_ast_identifier = visit_ASTIdentifier_;
+	visitor.visit_ast_literal = visit_ASTLiteral_;
+	visitor.visit_ast_localized_string = visit_ASTLocalizedString_;
+	visitor.visit_ast_member_expr = visit_ASTMemberExpr_;
+	visitor.visit_ast_unary_expr = visit_ASTUnaryExpr_;
+	visitor.visit_ast_expr_stmt = visit_ASTExprStmt_;
+	visitor.visit_ast_binary_expr = visit_ASTBinaryExpr_;
+
 	assert(argc > 1);
 	#ifdef DISK
 	static const char *base_path = "scripts/";
