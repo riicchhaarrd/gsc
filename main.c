@@ -371,6 +371,12 @@ IMPL_VISIT(ASTExprStmt)
 	visit_node(v, n->expression);
 	printf(";");
 }
+IMPL_VISIT(ASTGroupExpr)
+{
+	printf("(");
+	visit_node(v, n->expression);
+	printf(")");
+}
 IMPL_VISIT(ASTLiteral)
 {
 	switch(n->type)
@@ -418,6 +424,12 @@ IMPL_VISIT(ASTBlockStmt)
 	}
 	printf("}\n");
 }
+IMPL_VISIT(ASTAssignmentExpr)
+{
+	visit_node(v, n->lhs);
+	print_operator(n->op);
+	visit_node(v, n->rhs);
+}
 IMPL_VISIT(ASTIdentifier)
 {
 	printf("%s", n->name);
@@ -452,6 +464,8 @@ int main(int argc, char **argv)
 	visitor.visit_ast_unary_expr = visit_ASTUnaryExpr_;
 	visitor.visit_ast_expr_stmt = visit_ASTExprStmt_;
 	visitor.visit_ast_binary_expr = visit_ASTBinaryExpr_;
+	visitor.visit_ast_group_expr = visit_ASTGroupExpr_;
+	visitor.visit_ast_assignment_expr = visit_ASTAssignmentExpr_;
 
 	assert(argc > 1);
 	#ifdef DISK

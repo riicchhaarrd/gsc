@@ -25,6 +25,11 @@ struct ArrayExpr
 	public:
 	ASTNodePtr elements[?];
 };
+struct GroupExpr
+{
+	public:
+	ASTNodePtr expression;
+};
 struct AssignmentExpr
 {
 	public:

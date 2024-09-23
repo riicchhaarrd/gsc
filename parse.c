@@ -210,7 +210,7 @@ ASTNode *nud_array(Parser *parser, Token *token)
 
 ASTNode *nud_group(Parser *parser, Token *token)
 {
-    NODE(ExprStmt, n);
+    NODE(GroupExpr, n);
 	n->expression = parse_expression(parser, 0);
 	if(parser->token.type != ')')
 	{
