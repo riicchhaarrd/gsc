@@ -1,0 +1,2 @@
+#!/bin/bash
+gcc -g -ggdb3 -I ../../../include visitor.c parse.c main.c
