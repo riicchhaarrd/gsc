@@ -11,6 +11,11 @@ typedef union
 	float number;
 	float vector[4];
 	bool boolean;
+	union
+	{
+		ASTNode *file; // ASTFileReference
+		ASTNode *function; // ASTIdentifier
+	} function;
 } ASTLiteralValue;
 
 // typedef struct
@@ -43,4 +48,5 @@ struct ASTNode
 		AST_X_MACRO(AST_FIELD_DATA)
 	};
 	uint32_t type;
+	struct ASTNode *next;
 };

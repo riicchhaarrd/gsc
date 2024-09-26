@@ -20,6 +20,18 @@ extern ASTLiteralValue;
 // };
 
 // Expressions
+struct Function
+{
+	public:
+	char name[256];
+	ASTNodePtr body;
+};
+
+// struct Program
+// {
+// 	ASTNodePtr functions[?];
+// };
+
 struct ArrayExpr
 {
 	public:
@@ -60,15 +72,20 @@ struct ConditionalExpr
 	ASTNodePtr consequent;
 	ASTNodePtr alternative;
 };
-struct FunctionPtr
+// struct FunctionPtr
+// {
+// 	public:
+// 	char function_name[256];
+// };
+struct FileReference
 {
 	public:
-	char function_name[256];
+	char file[256];
 };
 struct Identifier
 {
 	public:
-	char file_reference[256];
+	// char file_reference[256];
 	char name[256];
 };
 
@@ -80,6 +97,7 @@ enum LiteralType
 	Float,
 	Vector,
 	Animation,
+	Function,
 	Undefined
 };
 

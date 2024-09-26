@@ -3,10 +3,11 @@
 #include "parse.h"
 #include <assert.h>
 #include "visitor.h"
+#include <core/ds/hash_table.h>
 
 static ASTVisitor visitor;
 
-// #define DISK
+#define DISK
 
 #define AST_VISITORS(UPPER, TYPE, LOWER) [UPPER] = (AstVisitorFn)TYPE ## _visit,
 
@@ -87,7 +88,8 @@ static size_t visit_ASTNodePtr(AstVisitor *visitor, const char *key, ASTNodePtr 
 		}
 		else if(n->type == AST_IDENTIFIER)
 		{
-			printf("(%s::%s)", n->ast_identifier_data.name, n->ast_identifier_data.file_reference);
+			// printf("(%s::%s)", n->ast_identifier_data.name, n->ast_identifier_data.file_reference);
+			printf("(%s)", n->ast_identifier_data.name);
 		}
 		printf("\n");
 		ast_visitors[n->type](visitor, key, n, 1, sizeof(ASTNode));
@@ -123,26 +125,11 @@ static void syntax_error(Parser *parser, const char *fmt, ...)
 	exit(-1);
 }
 
-static ASTNode *expression(Parser *parser)
-{
-	// parser->token.type = 0;
-	// lexer_step(parser->lexer, &parser->token);
-	ASTNodePtr node = parse_expression(parser, 0);
-
-	// size_t depth = 0;
-	// AstVisitor visitor;
-	// type_ast_visitor_init(&visitor, &depth);
-	// visitor.visit_ASTNodePtr = (AstVisitorFn)visit_ASTNodePtr;
-	// visitor.visit_char = (AstVisitorFn)visit_char;
-	// visitor.visit_uint32 = (AstVisitorFn)visit_uint32;
-	// visitor.visit_int = (AstVisitorFn)visit_int;
-	// visitor.visit_bool = (AstVisitorFn)visit_bool;
-	// visit_ASTNodePtr(&visitor, NULL, &node, 1, 0);
-	visit_node(&visitor, node);
-	return node;
-}
+ASTNode *expression(Parser *parser);
 
 static ASTNode* block(Parser *parser);
+static ASTNode *body(Parser *parser);
+
 static ASTNode *statement(Parser *parser)
 {
 	printf("statement() : ");
@@ -151,6 +138,136 @@ static ASTNode *statement(Parser *parser)
 	ASTNode *n = NULL;
 	switch(parser->token.type)
 	{
+		case TK_COMMENT:
+		{
+			advance(parser, TK_COMMENT);
+			NODE(EmptyStmt, stmt);
+			n = stmt;
+		}
+		break;
+
+		case TK_WHILE:
+		{
+			NODE(WhileStmt, stmt);
+			n = stmt;
+			advance(parser, TK_WHILE);
+			advance(parser, '(');
+			stmt->test = expression(parser);
+			advance(parser, ')');
+			stmt->body = body(parser);
+		}
+		break;
+
+		case TK_FOR:
+		{
+			NODE(ForStmt, stmt);
+			n = stmt;
+			advance(parser, TK_FOR);
+			advance(parser, '(');
+			if(parser->token.type != ';')
+				stmt->init = expression(parser);
+			advance(parser, ';');
+			if(parser->token.type != ';')
+				stmt->test = expression(parser);
+			advance(parser, ';');
+			if(parser->token.type != ')')
+				stmt->update = expression(parser);
+			advance(parser, ')');
+
+			stmt->body = body(parser);
+		}
+		break;
+
+		// case TK_THREAD:
+		// {
+		// 	NODE(ExprStmt, stmt);
+		// 	advance(parser, TK_THREAD);
+		// 	stmt->expression = expression(parser);
+		// 	if(stmt->expression->type != AST_CALL_EXPR)
+		// 	{
+		// 		lexer_error(parser->lexer, "Expected call expression for thread");
+		// 	}
+		// 	n = stmt;
+		// 	advance(parser, ';');
+		// }
+		// break;
+
+		case TK_BREAK:
+		{
+			NODE(BreakStmt, stmt);
+			n = stmt;
+			advance(parser, TK_BREAK);
+			advance(parser, ';');
+		}
+		break;
+		
+		case TK_WAIT:
+		{
+			NODE(WaitStmt, stmt);
+			n = stmt;
+			advance(parser, TK_WAIT);
+			stmt->duration = expression(parser);
+			advance(parser, ';');
+		}
+		break;
+
+		case TK_CONTINUE:
+		{
+			NODE(ContinueStmt, stmt);
+			n = stmt;
+			advance(parser, TK_CONTINUE);
+			advance(parser, ';');
+		}
+		break;
+
+		case TK_SWITCH:
+		{
+			NODE(SwitchStmt, stmt);
+			n = stmt;
+			advance(parser, TK_SWITCH);
+			advance(parser, '(');
+			stmt->discriminant = expression(parser);
+			advance(parser, ')');
+			advance(parser, '{');
+			while(1)
+			{
+				if(parser->token.type == '}')
+					break;
+				if(parser->token.type == TK_DEFAULT)
+				{
+					advance(parser, TK_DEFAULT);
+				}
+				else
+				{
+					advance(parser, TK_CASE);
+					// advance(parser, TK_IDENTIFIER);
+					expression(parser); // For a dynamic scripting language accept expressions instead of labels.
+				}
+				advance(parser, ':');
+				while(1)
+				{
+					if(parser->token.type == TK_DEFAULT || parser->token.type == TK_CASE || parser->token.type == '}')
+						break;
+					body(parser);
+				}
+			}
+			advance(parser, '}');
+		}
+		break;
+
+		case TK_RETURN:
+		{
+			advance(parser, TK_RETURN);
+			NODE(ReturnStmt, stmt);
+			n = (ASTNode*)stmt;
+			if(parser->token.type != ';')
+			{
+				stmt->argument = expression(parser); // TODO: can't call a threaded call expr in return, seperate parse_expression and expression functions
+			}
+			advance(parser, ';');
+		}
+		break;
+
 		case TK_IF:
 		{
 			NODE(IfStmt, if_stmt);
@@ -159,34 +276,22 @@ static ASTNode *statement(Parser *parser)
 			advance(parser, '(');
 			if_stmt->test = expression(parser);
 			advance(parser, ')');
-			if(parser->token.type == '{')
-			{
-				advance(parser, '{');
-				if_stmt->consequent = block(parser);
-			} else
-			{
-				if_stmt->consequent = statement(parser);
-			}
+			if_stmt->consequent = body(parser);
 			if(parser->token.type == TK_ELSE)
 			{
 				advance(parser, TK_ELSE);
-				if(parser->token.type == '{')
-				{
-					advance(parser, '{');
-					if_stmt->consequent = block(parser);
-				}
-				else
-				{
-					if_stmt->consequent = statement(parser);
-				}
+				if_stmt->alternative = body(parser);
 			}
 		}
 		break;
 
 		default:
-			n = expression(parser);
+		{
+			NODE(ExprStmt, stmt);
+			n = (ASTNode*)stmt;
+			stmt->expression = expression(parser);
 			advance(parser, ';');
-			break;
+		} break;
 	}
 	return n;
 }
@@ -194,9 +299,13 @@ static ASTNode *statement(Parser *parser)
 static ASTNode* block(Parser *parser)
 {
 	NODE(BlockStmt, n);
+	n->numbody = 0;
+	ASTNode **root = &n->body;
 	while(parser->token.type != '}')
 	{
 		ASTNode *stmt = statement(parser);
+		*root = stmt;
+		root = &stmt->next;
 		// visit_node(&visitor, stmt);
 		assert(stmt);
 		// printf("statement(%s) ", ast_node_names[stmt->type]);
@@ -210,7 +319,22 @@ static ASTNode* block(Parser *parser)
 	return (ASTNode*)n;
 }
 
-static void parse(Parser *parser)
+static ASTNode *body(Parser *parser)
+{
+	if(parser->token.type == '{')
+	{
+		advance(parser, '{');
+		return block(parser);
+	}
+	return statement(parser);
+}
+
+typedef struct
+{
+	HashTable ht;
+} ASTProgram;
+
+static void parse(Parser *parser, ASTProgram *prog)
 {
 	// while(lexer_step(parser->lexer, &parser->token))
 	char type[64];
@@ -226,8 +350,21 @@ static void parse(Parser *parser)
 				printf("ident:%s\n",ident);
 				if(!strcmp(ident, "include"))
 				{
-					const char *path = string(parser, TK_IDENTIFIER);
-					printf("path:%s\n", path);
+					ASTNode *parse_identifier(Parser * parser, Token * t);
+					// const char *path = string(parser, TK_IDENTIFIER);
+					advance(parser, TK_IDENTIFIER);
+					ASTNode *path = parse_identifier(parser, &parser->token);
+					if(path->type != AST_FILE_REFERENCE)
+					{
+						lexer_error(parser->lexer, "Expected file reference for include");
+					}
+					printf("path:%s\n", path->ast_file_reference_data.file);
+				} else if(!strcmp(ident, "using_animtree"))
+				{
+					advance(parser, '(');
+					const char *tree = string(parser, TK_STRING);
+					advance(parser, ')');
+					printf("using_animtree tree:%s\n", tree);
 				}
 				else
 				{
@@ -241,16 +378,32 @@ static void parse(Parser *parser)
 			// Global scope, function definitions
 			case TK_IDENTIFIER:
 			{
-				char name[128];
-				lexer_token_read_string(parser->lexer, &parser->token, name, sizeof(name));
+				NODE(Function, func);
+				lexer_token_read_string(parser->lexer, &parser->token, func->name, sizeof(func->name));
 				advance(parser, TK_IDENTIFIER);
-				printf("func: %s\n", name);
 				advance(parser, '(');
+				if(parser->token.type != ')')
+				{
+					while(1)
+					{
+						advance(parser, TK_IDENTIFIER); // TODO: save args
+						if(parser->token.type != ',')
+							break;
+						advance(parser, ',');
+					}
+				}
 				advance(parser, ')');
 				// lexer_step(parser->lexer, &parser->token);
 				advance(parser, '{');
-				ASTNode *body = block(parser);
-				visit_node(&visitor, body);
+				func->body = block(parser);
+				// visit_node(&visitor, func->body);
+
+				HashTableEntry *entry = hash_table_insert(&prog->ht, func->name);
+				if(entry->value)
+				{
+					lexer_error(parser->lexer, "Function '%s' already defined", func->name);
+				}
+				entry->value = func;
 			}
 			break;
 #endif
@@ -310,7 +463,17 @@ static void parse_line(const char *line)
 	// tokenize(parser.lexer);
 	// getchar();
 	lexer_step(parser.lexer, &parser.token);
-	parse(&parser);
+	ASTProgram prog = { 0 };
+	hash_table_init(&prog.ht, 12);
+	parse(&parser, &prog);
+
+	HashTableEntry *it = prog.ht.tail;
+	while(it)
+	{
+		// TODO: reverse iteration order
+		visit_node(&visitor, it->value);
+		it = it->prev;
+	}
 }
 
 static void parse_file(const char *path)
@@ -356,6 +519,10 @@ IMPL_VISIT(ASTMemberExpr)
 	visit_node(v, n->object);
 	print_operator(n->op);
 	visit_node(v, n->prop);
+	if(n->op == '[')
+	{
+		printf("]");
+	}
 }
 IMPL_VISIT(ASTLocalizedString)
 {
@@ -369,7 +536,31 @@ IMPL_VISIT(ASTUnaryExpr)
 IMPL_VISIT(ASTExprStmt)
 {
 	visit_node(v, n->expression);
-	printf(";");
+	printf(";\n");
+}
+IMPL_VISIT(ASTReturnStmt)
+{
+	if(!n->argument)
+		printf("return;");
+	else
+	{
+		printf("return ");
+		visit_node(v, n->argument);
+		printf(";");
+	}
+	printf("\n");
+}
+IMPL_VISIT(ASTIfStmt)
+{
+	printf("\nif(");
+	visit_node(v, n->test);
+	printf(")\n");
+	visit_node(v, n->consequent);
+	if(n->alternative)
+	{
+		printf("\nelse\n");
+		visit_node(v, n->alternative);
+	}
 }
 IMPL_VISIT(ASTGroupExpr)
 {
@@ -377,6 +568,10 @@ IMPL_VISIT(ASTGroupExpr)
 	visit_node(v, n->expression);
 	printf(")");
 }
+// IMPL_VISIT(ASTFunctionPtr)
+// {
+// 	printf("::%s", n->function_name);
+// }
 IMPL_VISIT(ASTLiteral)
 {
 	switch(n->type)
@@ -398,7 +593,7 @@ IMPL_VISIT(ASTLiteral)
 		break;
 		case AST_LITERAL_TYPE_STRING:
 		{
-			printf("%s", n->value.string);
+			printf("\"%s\"", n->value.string);
 		}
 		break;
 		default:
@@ -418,10 +613,16 @@ IMPL_VISIT(ASTBinaryExpr)
 IMPL_VISIT(ASTBlockStmt)
 {
 	printf("{\n");
-	for(size_t i = 0; i < n->numbody; ++i)
+	ASTNode **it = &n->body;
+	while(*it)
 	{
-		visit_node(v, n->body[i]);
+		visit_node(v, *it);
+		it = &((*it)->next);
 	}
+	// for(size_t i = 0; i < n->numbody; ++i)
+	// {
+	// 	visit_node(v, n->body[i]);
+	// }
 	printf("}\n");
 }
 IMPL_VISIT(ASTAssignmentExpr)
@@ -430,11 +631,27 @@ IMPL_VISIT(ASTAssignmentExpr)
 	print_operator(n->op);
 	visit_node(v, n->rhs);
 }
+IMPL_VISIT(ASTVectorExpr)
+{
+	printf("(");
+	for(size_t i = 0; i < n->numelements; ++i)
+	{
+		visit_node(v, n->elements[i]);
+		if(i + 1 < n->numelements)
+			printf(", ");
+	}
+	printf(")");
+}
 IMPL_VISIT(ASTIdentifier)
 {
+	// if(n->file_reference[0] != 0)
+	// 	printf("%s::", n->file_reference);
 	printf("%s", n->name);
-	if(n->file_reference[0] != 0)
-		printf("::%s", n->file_reference);
+}
+IMPL_VISIT(ASTFunction)
+{
+	printf("%s()\n", n->name);
+	visit_node(v, n->body);
 }
 IMPL_VISIT(ASTCallExpr)
 {
@@ -466,6 +683,11 @@ int main(int argc, char **argv)
 	visitor.visit_ast_binary_expr = visit_ASTBinaryExpr_;
 	visitor.visit_ast_group_expr = visit_ASTGroupExpr_;
 	visitor.visit_ast_assignment_expr = visit_ASTAssignmentExpr_;
+	visitor.visit_ast_function = visit_ASTFunction_;
+	visitor.visit_ast_if_stmt = visit_ASTIfStmt_;
+	visitor.visit_ast_vector_expr = visit_ASTVectorExpr_;
+	visitor.visit_ast_return_stmt = visit_ASTReturnStmt_;
+	// visitor.visit_ast_function_ptr = visit_ASTFunctionPtr_;
 
 	assert(argc > 1);
 	#ifdef DISK

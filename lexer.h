@@ -20,10 +20,13 @@
 	X(BREAK, CT_HASH(break, 0xc9648178))         \
 	X(RETURN, CT_HASH(return, 0x85ee37bf))       \
 	X(SWITCH, CT_HASH(switch, 0x93e05f71))       \
+	X(DEFAULT, CT_HASH(default, 0x933b5bde))     \
+	X(CASE, CT_HASH(case, 0x9b2538b1))           \
 	X(TRUE, CT_HASH(true, 0x4db211e5))           \
 	X(FALSE, CT_HASH(false, 0xb069958))          \
 	X(UNDEFINED, CT_HASH(undefined, 0x9b61ad43)) \
 	X(THREAD, CT_HASH(thread, 0xa2026671))       \
+	X(WAIT, CT_HASH(wait, 0x892e4ca0))           \
 	X(WAITTILLFRAMEEND, CT_HASH(waittillframeend, 0x17257589))
 
 #define LEXER_STATIC static
@@ -45,16 +48,16 @@
 	X(DECREMENT, "--") \
 	X(SCOPE_RESOLUTION, "::") \
 	X(DIV_ASSIGN, '/') \
-	X(ELLIPSIS, "...")
+	X(ELLIPSIS, "...") \
+	X(PLUS_ASSIGN, "+=") \
+	X(MINUS_ASSIGN, "-=")
 
 #define EQ_OPERATORS(X) \
 	X(XOR_ASSIGN, '^') \
 	X(MOD_ASSIGN, '%') \
-	X(PLUS_ASSIGN, '+') \
-	X(MINUS_ASSIGN, '-') \
 	X(MUL_ASSIGN, '*') \
 	X(EQUAL, '=') \
-	X(NEQUAL, '!') \
+	X(NEQUAL, '!')
 
 #define TOKENS(X) TOKENS_(X) EQ_OPERATORS(X) IDENTS(X)
 
@@ -120,7 +123,8 @@ enum
 	LEXER_FLAG_NONE = 0,
 	LEXER_FLAG_PRINT_SOURCE_ON_ERROR = 1,
 	LEXER_FLAG_TOKENIZE_WHITESPACE = 2,
-	LEXER_FLAG_TOKENIZE_NEWLINES = 4
+	LEXER_FLAG_TOKENIZE_NEWLINES = 4,
+	LEXER_FLAG_TOKENIZE_COMMENTS = 8
 };
 
 typedef struct
@@ -141,7 +145,7 @@ LEXER_STATIC void lexer_init(Lexer *l, Stream *stream)
 	l->userptr = NULL;
 }
 
-LEXER_STATIC void lexer_token_read_string(Lexer *lexer, Token *t, char *temp, size_t max_temp_size)
+LEXER_STATIC size_t lexer_token_read_string(Lexer *lexer, Token *t, char *temp, size_t max_temp_size)
 {
 	Stream *ls = lexer->stream;
 	int64_t offset = ls->tell(ls);
@@ -152,6 +156,7 @@ LEXER_STATIC void lexer_token_read_string(Lexer *lexer, Token *t, char *temp, si
 	ls->read(ls, temp, 1, n);
 	temp[n] = 0;
 	ls->seek(ls, offset, SEEK_SET);
+	return n;
 }
 
 LEXER_STATIC int lexer_advance(Lexer *l)
@@ -363,7 +368,7 @@ LEXER_STATIC bool cond_ident_(int ch, bool *undo)
 		return false;
 	if(ch >= '0' && ch <= '9')
 		return false;
-	if(ch == '_' || ch == '\\')
+	if(ch == '_')// || ch == '\\')
 		return false;
 	return true;
 }
@@ -500,6 +505,20 @@ repeat:
 			if(lexer_match_char(lexer, ':'))
 				t->type = TK_SCOPE_RESOLUTION;
 		break;
+		
+		case '-':
+			if(lexer_match_char(lexer, '-'))
+				t->type = TK_DECREMENT;
+			else if(lexer_match_char(lexer, '='))
+				t->type = TK_MINUS_ASSIGN;
+		break;
+
+		case '+':
+			if(lexer_match_char(lexer, '+'))
+				t->type = TK_INCREMENT;
+			else if(lexer_match_char(lexer, '='))
+				t->type = TK_PLUS_ASSIGN;
+		break;
 
 		case '&':
 			if(lexer_match_char(lexer, '='))
@@ -573,10 +592,14 @@ repeat:
 			if(ch == '/')
 			{
 				lexer_parse_characters(lexer, t, TK_COMMENT, cond_single_line_comment_);
+				if(!(lexer->flags & LEXER_FLAG_TOKENIZE_COMMENTS))
+					goto repeat;
 			}
 			else if(ch == '*')
 			{
 				lexer_parse_multiline_comment(lexer, TK_COMMENT, t);
+				if(!(lexer->flags & LEXER_FLAG_TOKENIZE_COMMENTS))
+					goto repeat;
 			}
 			else if(ch == '=')
 			{

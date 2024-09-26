@@ -1,12 +1,13 @@
 #ifndef AST_X_MACRO
 #define AST_X_MACRO(X) \
+	X(AST_FUNCTION, ASTFunction, ast_function) \
 	X(AST_ARRAY_EXPR, ASTArrayExpr, ast_array_expr) \
 	X(AST_GROUP_EXPR, ASTGroupExpr, ast_group_expr) \
 	X(AST_ASSIGNMENT_EXPR, ASTAssignmentExpr, ast_assignment_expr) \
 	X(AST_BINARY_EXPR, ASTBinaryExpr, ast_binary_expr) \
 	X(AST_CALL_EXPR, ASTCallExpr, ast_call_expr) \
 	X(AST_CONDITIONAL_EXPR, ASTConditionalExpr, ast_conditional_expr) \
-	X(AST_FUNCTION_PTR, ASTFunctionPtr, ast_function_ptr) \
+	X(AST_FILE_REFERENCE, ASTFileReference, ast_file_reference) \
 	X(AST_IDENTIFIER, ASTIdentifier, ast_identifier) \
 	X(AST_LITERAL, ASTLiteral, ast_literal) \
 	X(AST_LOCALIZED_STRING, ASTLocalizedString, ast_localized_string) \
@@ -44,6 +45,12 @@ typedef int8_t int8;
 typedef int16_t int16;
 typedef int32_t int32;
 typedef int64_t int64;
+
+typedef struct
+{
+	char name[256];
+	ASTNodePtr body;
+} ASTFunction;
 
 typedef struct
 {
@@ -89,12 +96,11 @@ typedef struct
 
 typedef struct
 {
-	char function_name[256];
-} ASTFunctionPtr;
+	char file[256];
+} ASTFileReference;
 
 typedef struct
 {
-	char file_reference[256];
 	char name[256];
 } ASTIdentifier;
 
@@ -106,6 +112,7 @@ typedef enum
 	AST_LITERAL_TYPE_FLOAT,
 	AST_LITERAL_TYPE_VECTOR,
 	AST_LITERAL_TYPE_ANIMATION,
+	AST_LITERAL_TYPE_FUNCTION,
 	AST_LITERAL_TYPE_UNDEFINED
 } ASTLiteralType;
 
@@ -269,6 +276,21 @@ struct AstVisitor_s
 
 // ============              VISITORS            ==================
 
+static size_t ASTFunction_visit(AstVisitor *visitor, const char *key, ASTFunction *inst, size_t nmemb, size_t size)
+{
+	size_t changed_count = 0;
+	size_t n = 0;
+	if(visitor->pre_visit(visitor, "name", 0x8e631b86, (void**)&inst->name, NULL, sizeof(inst->name[0])))
+	{
+		changed_count += visitor->visit_char(visitor, "name", (char*)&inst->name[0], 256, sizeof(inst->name[0]));
+	}
+	if(visitor->pre_visit(visitor, "body", 0xc6c93295, NULL, NULL, sizeof(inst->body)))
+	{
+		changed_count += visitor->visit_ASTNodePtr(visitor, "body", (ASTNodePtr*)&inst->body, 1, sizeof(inst->body));
+	}
+	return changed_count;
+}
+
 static size_t ASTArrayExpr_visit(AstVisitor *visitor, const char *key, ASTArrayExpr *inst, size_t nmemb, size_t size)
 {
 	size_t changed_count = 0;
@@ -375,13 +397,13 @@ static size_t ASTConditionalExpr_visit(AstVisitor *visitor, const char *key, AST
 	return changed_count;
 }
 
-static size_t ASTFunctionPtr_visit(AstVisitor *visitor, const char *key, ASTFunctionPtr *inst, size_t nmemb, size_t size)
+static size_t ASTFileReference_visit(AstVisitor *visitor, const char *key, ASTFileReference *inst, size_t nmemb, size_t size)
 {
 	size_t changed_count = 0;
 	size_t n = 0;
-	if(visitor->pre_visit(visitor, "function_name", 0x47e36029, (void**)&inst->function_name, NULL, sizeof(inst->function_name[0])))
+	if(visitor->pre_visit(visitor, "file", 0xf02a6a23, (void**)&inst->file, NULL, sizeof(inst->file[0])))
 	{
-		changed_count += visitor->visit_char(visitor, "function_name", (char*)&inst->function_name[0], 256, sizeof(inst->function_name[0]));
+		changed_count += visitor->visit_char(visitor, "file", (char*)&inst->file[0], 256, sizeof(inst->file[0]));
 	}
 	return changed_count;
 }
@@ -390,10 +412,6 @@ static size_t ASTIdentifier_visit(AstVisitor *visitor, const char *key, ASTIdent
 {
 	size_t changed_count = 0;
 	size_t n = 0;
-	if(visitor->pre_visit(visitor, "file_reference", 0x774845a9, (void**)&inst->file_reference, NULL, sizeof(inst->file_reference[0])))
-	{
-		changed_count += visitor->visit_char(visitor, "file_reference", (char*)&inst->file_reference[0], 256, sizeof(inst->file_reference[0]));
-	}
 	if(visitor->pre_visit(visitor, "name", 0x8e631b86, (void**)&inst->name, NULL, sizeof(inst->name[0])))
 	{
 		changed_count += visitor->visit_char(visitor, "name", (char*)&inst->name[0], 256, sizeof(inst->name[0]));
@@ -684,6 +702,10 @@ static void type_ast_visitor_init(AstVisitor *v, void *ctx)
 }
 // ============           INITIALIZATION         ==================
 
+static void ASTFunction_init(ASTFunction *inst)
+{
+}
+
 static void ASTArrayExpr_init(ASTArrayExpr *inst)
 {
 }
@@ -710,7 +732,7 @@ static void ASTConditionalExpr_init(ASTConditionalExpr *inst)
 {
 }
 
-static void ASTFunctionPtr_init(ASTFunctionPtr *inst)
+static void ASTFileReference_init(ASTFileReference *inst)
 {
 }
 

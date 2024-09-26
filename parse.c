@@ -25,6 +25,8 @@ skipping over the irrelevant precedence levels.
 #include <ctype.h>
 #include <stdarg.h>
 
+ASTNode *expression(Parser *parser);
+
 static void DEBUG(const char *fmt, ...)
 {
 	char message[2048];
@@ -57,15 +59,56 @@ static void syntax_error(Parser *parser, const char *fmt, ...)
 	exit(-1);
 }
 
-ASTNode *identifier(Parser *parser, const char *s)
+ASTNode *parse_identifier(Parser *parser, Token *t)
 {
-	NODE(Identifier, n);
-	snprintf(n->name, sizeof(n->name), "%s", s);
-	if(lexer_accept(parser->lexer, TK_SCOPE_RESOLUTION, NULL))
+	char id[256];
+	lexer_token_read_string(parser->lexer, t, id, sizeof(id));
+	if(parser->token.type == '\\')
 	{
-		lexer_expect_read_string(parser->lexer, TK_IDENTIFIER, n->file_reference, sizeof(n->file_reference));
+		NODE(FileReference, n);
+		size_t written = 0;
+		written += snprintf(n->file, sizeof(n->file), "%s", id);
+
+		while(parser->token.type == '\\')
+		{
+			advance(parser, '\\');
+			advance(parser, TK_IDENTIFIER);
+			size_t len = lexer_token_read_string(parser->lexer, &parser->token, parser->string, parser->max_string_length);
+			if(written >= sizeof(n->file))
+			{
+				lexer_error(parser->lexer, "written >= sizeof(n->file)");
+			}
+			strncat(n->file, parser->string, sizeof(n->file) - written - 1);
+			written += len;
+		}
+		return n;
 	}
-	return (ASTNode *)n;
+	NODE(Identifier, n);
+	snprintf(n->name, sizeof(n->name), "%s", id);
+	return n;
+}
+
+ASTNode *parse_function_identifier(Parser *parser, Token *t)
+{
+	ASTNode *ident = parse_identifier(parser, t);
+	if(parser->token.type == TK_SCOPE_RESOLUTION)
+	{
+		advance(parser, TK_SCOPE_RESOLUTION);
+
+		NODE(Literal, n);
+		n->type = AST_LITERAL_TYPE_FUNCTION;
+		n->value.function.file = ident;
+		if(ident->type != AST_FILE_REFERENCE)
+		{
+			lexer_error(parser->lexer, "Not a file reference");
+		}
+		advance(parser, TK_IDENTIFIER);
+		NODE(Identifier, function_ident);
+		lexer_token_read_string(parser->lexer, &parser->token, function_ident->name, sizeof(function_ident->name));
+		n->value.function.function = function_ident;
+		return n;
+	}
+	return ident;
 }
 
 typedef enum
@@ -88,15 +131,76 @@ typedef struct
 
 ASTNode *parse_expression(Parser *parser, int precedence);
 
+ASTNode *call_expression(Parser *parser, ASTNode *callee)
+{
+	NODE(CallExpr, n);
+	// Stream *s = parser->lexer->stream;
+	// int64_t current = s->tell(s);
+	size_t cap = 16;
+	n->callee = callee;
+	n->arguments = malloc(sizeof(ASTNode*) * cap);
+	size_t nargs = 0;
+	if(parser->token.type != ')')
+	{
+		while(1)
+		{
+			if(parser->token.type == ')')
+				break;
+			ASTNode *arg = expression(parser);
+			if(nargs >= cap)
+			{
+				lexer_error(parser->lexer, "Max args for function call");
+			}
+			printf("arg: %s\n", ast_node_names[arg->type]);
+			n->arguments[nargs++] = arg;
+			if(parser->token.type != ',')
+				break;
+			advance(parser, ',');
+		}
+	}
+	advance(parser, ')');
+	n->object = NULL;
+	n->pointer = false;
+	n->threaded = false;
+	n->numarguments = nargs;
+	return (ASTNode *)n;
+}
+
+ASTNode *expression(Parser *parser)
+{
+	ASTNodePtr node = parse_expression(parser, 0);
+	return node;
+}
+
 ASTNode *nud_literal(Parser *parser, Token *t)
 {
 	switch(t->type)
 	{
+		case TK_SCOPE_RESOLUTION:
+		{
+			NODE(Literal, n);
+			n->type = AST_LITERAL_TYPE_FUNCTION;
+			advance(parser, TK_IDENTIFIER);
+			lexer_token_read_string(parser->lexer, t, parser->string, parser->max_string_length);
+			n->value.string = strdup(parser->string);
+			return (ASTNode*)n;
+		}
+		break;
+
+		case TK_MOD:
+		{
+			NODE(Literal, n);
+			n->type = AST_LITERAL_TYPE_ANIMATION;
+			advance(parser, TK_IDENTIFIER);
+			lexer_token_read_string(parser->lexer, t, parser->string, parser->max_string_length);
+			n->value.string = strdup(parser->string);
+			return (ASTNode*)n;
+		}
+		break;
+
 		case TK_IDENTIFIER:
 		{
-			char id[256];
-			lexer_token_read_string(parser->lexer, t, id, sizeof(id));
-			return identifier(parser, id);
+			return parse_function_identifier(parser, t);
 		}
 		break;
 
@@ -139,6 +243,49 @@ ASTNode *led_binary(Parser *parser, ASTNode *left, Token *token, int bp)
 	return (ASTNode *)n;
 }
 
+ASTNode *nud_thread_call(Parser *parser, Token *token)
+{
+	advance(parser, TK_IDENTIFIER);
+	Token t = parser->token;
+	ASTNode *ident = parse_function_identifier(parser, &t);
+	advance(parser, '(');
+	ASTNodePtr n = call_expression(parser, ident);
+	n->ast_call_expr_data.threaded = false;
+	n->ast_call_expr_data.object = NULL;
+	return (ASTNode *)n;
+}
+
+ASTNode *led_thread_member_call(Parser *parser, ASTNode *left, Token *token, int bp)
+{
+	advance(parser, TK_IDENTIFIER);
+	Token t = parser->token;
+	ASTNode *ident = parse_function_identifier(parser, &t);
+	advance(parser, '(');
+	ASTNodePtr n = call_expression(parser, ident);
+	n->ast_call_expr_data.threaded = true;
+	n->ast_call_expr_data.object = left;
+	return (ASTNode *)n;
+}
+
+ASTNode *led_member_call(Parser *parser, ASTNode *left, Token *token, int bp)
+{
+	ASTNode *ident = parse_function_identifier(parser, token);
+	advance(parser, '(');
+	ASTNodePtr n = call_expression(parser, ident);
+	n->ast_call_expr_data.threaded = false;
+	n->ast_call_expr_data.object = left;
+	return (ASTNode *)n;
+}
+
+ASTNode *led_unary(Parser *parser, ASTNode *left, Token *token, int bp)
+{
+    NODE(UnaryExpr, n);
+    n->argument = left;
+    n->op = token->type;
+	n->prefix = false;
+	return (ASTNode *)n;
+}
+
 ASTNode *led_member(Parser *parser, ASTNode *left, Token *token, int bp)
 {
     NODE(MemberExpr, n);
@@ -160,61 +307,56 @@ ASTNode *led_bracket(Parser *parser, ASTNode *left, Token *token, int bp)
     NODE(MemberExpr, n);
 	n->object = left;
 	n->op = token->type;
-	n->prop = parse_expression(parser, 0);
-	if(parser->token.type != ']')
-	{
-		lexer_error(parser->lexer, "Expected ]");
-	}
-	// lexer_expect(parser->lexer, ']', NULL);
+	n->prop = expression(parser);
+	advance(parser, ']');
 	return (ASTNode *)n;
 }
 
 ASTNode *led_function(Parser *parser, ASTNode *left, Token *token, int bp)
 {
-	NODE(CallExpr, n);
-	// Stream *s = parser->lexer->stream;
-	// int64_t current = s->tell(s);
-	size_t cap = 16;
-	n->callee = left;
-	n->arguments = malloc(sizeof(ASTNode*) * cap);
-	size_t nargs = 0;
-	if(parser->token.type != ')')
-	{
-		while(1)
-		{
-			ASTNode *arg = parse_expression(parser, 0);
-			if(nargs >= cap)
-			{
-				lexer_error(parser->lexer, "Max args for function call");
-			}
-			printf("arg: %s\n", ast_node_names[arg->type]);
-			n->arguments[nargs++] = arg;
-			if(parser->token.type != ',')
-				break;
-			advance(parser, ',');
-		}
-		advance(parser, ')');
-	}
-	n->object = NULL;
-	n->pointer = false;
-	n->threaded = false;
-	n->numarguments = nargs;
-	return (ASTNode *)n;
+	return call_expression(parser, left);
+}
+
+ASTNode *nud_and(Parser *parser, Token *token)
+{
+    NODE(LocalizedString, n);
+	advance(parser, TK_STRING);
+	lexer_token_read_string(parser->lexer, &parser->token, n->reference, sizeof(n->reference));
+	return (ASTNode*)n;
 }
 
 ASTNode *nud_array(Parser *parser, Token *token)
 {
-	lexer_error(parser->lexer, "TODO %s", __FUNCTION__);
-	return NULL;
+	NODE(ArrayExpr, n);
+	n->numelements = 0;
+	if(parser->token.type == ']')
+	{
+		advance(parser, ']');
+	}
+	return n;
 }
 
 ASTNode *nud_group(Parser *parser, Token *token)
 {
-    NODE(GroupExpr, n);
-	n->expression = parse_expression(parser, 0);
-	if(parser->token.type != ')')
+	ASTNode *n = NULL;
+	ASTNode *expr = expression(parser);
+	if(parser->token.type == ',') // Vector
 	{
-		lexer_error(parser->lexer, "Expected ) after left paren");
+		NODE(VectorExpr, vec);
+		vec->elements = malloc(sizeof(ASTNode *) * 3);
+		vec->elements[0] = expr;
+		for(size_t i = 1; i < 3; ++i)
+		{
+			advance(parser, ',');
+			vec->elements[i] = expression(parser);
+		}
+		vec->numelements = 3;
+		n = vec;
+	} else
+	{
+		NODE(GroupExpr, grp);
+		grp->expression = expr;
+		n = grp;
 	}
 	advance(parser, ')');
 	return (ASTNode*)n;
@@ -233,24 +375,21 @@ ASTNode *led_ternary(Parser *parser, ASTNode *left, Token *token, int bp)
 {
     NODE(IfStmt, n);
 	n->test = left;
-	n->consequent = parse_expression(parser, 0);
-	if(parser->token.type != ':')
-	{
-		lexer_error(parser->lexer, "Expected :");
-	}
-	lexer_step(parser->lexer, &parser->token);
-	n->alternative = parse_expression(parser, 0);
+	n->consequent = expression(parser);
+	advance(parser, ':');
+	n->alternative = expression(parser);
 	return (ASTNode *)n;
 }
 
 ASTNode *nud_unary(Parser *parser, Token *token);
 
 static const Operator operator_table[TK_MAX] = {
-	[TK_PLUS] = { 50, LEFT_ASSOC, NULL, led_binary },
-	[TK_MINUS] = { 50, LEFT_ASSOC, NULL, led_binary },
+	['#'] = { 0, LEFT_ASSOC, nud_unary, NULL },
+	[TK_PLUS] = { 50, LEFT_ASSOC, nud_unary, led_binary },
+	[TK_MINUS] = { 50, LEFT_ASSOC, nud_unary, led_binary },
 	[TK_MULTIPLY] = { 60, LEFT_ASSOC, NULL, led_binary },
 	[TK_DIVIDE] = { 60, LEFT_ASSOC, NULL, led_binary },
-	[TK_MOD] = { 60, LEFT_ASSOC, NULL, led_binary },
+	[TK_MOD] = { 60, LEFT_ASSOC, nud_literal, led_binary },
 	[TK_LSHIFT] = { 40, LEFT_ASSOC, NULL, led_binary },
 	[TK_RSHIFT] = { 40, LEFT_ASSOC, NULL, led_binary },
 	[TK_LESS] = { 40, LEFT_ASSOC, NULL, led_binary },
@@ -261,7 +400,7 @@ static const Operator operator_table[TK_MAX] = {
 	[TK_NEQUAL] = { 40, LEFT_ASSOC, NULL, led_binary },
 	[TK_LOGICAL_AND] = { 30, LEFT_ASSOC, NULL, led_binary },
 	[TK_LOGICAL_OR] = { 30, LEFT_ASSOC, NULL, led_binary },
-	[TK_BITWISE_AND] = { 40, LEFT_ASSOC, NULL, led_binary },
+	[TK_BITWISE_AND] = { 40, LEFT_ASSOC, nud_and, led_binary },
 	[TK_BITWISE_OR] = { 40, LEFT_ASSOC, NULL, led_binary },
 	[TK_BITWISE_XOR] = { 40, LEFT_ASSOC, NULL, led_binary },
 	[TK_ASSIGN] = { 10, RIGHT_ASSOC, NULL, led_assignment },
@@ -279,17 +418,23 @@ static const Operator operator_table[TK_MAX] = {
 	// [TK_COLON] = { 20, RIGHT_ASSOC, NULL, NULL }, // Ternary operator
 	// [TK_COMMA] = { 1, LEFT_ASSOC, NULL, led_binary },
 	['('] = { 80, LEFT_ASSOC, nud_group, led_function },
+	// [')'] = { 80, LEFT_ASSOC, NULL, NULL },
 	// [TK_INCREMENT] = { 1, LEFT_ASSOC, NULL, NULL },		// Postfix
 	// [TK_DECREMENT] = { 1, LEFT_ASSOC, NULL, NULL },		// Postfix
 	['['] = { 80, LEFT_ASSOC, nud_array, led_bracket },
+	// [']'] = { 80, LEFT_ASSOC, NULL, NULL },
 	['.'] = { 80, LEFT_ASSOC, NULL, led_member },
+	[TK_INCREMENT] = { 80, LEFT_ASSOC, NULL, led_unary },
+	[TK_DECREMENT] = { 80, LEFT_ASSOC, NULL, led_unary },
 	[TK_NOT] = { 70, RIGHT_ASSOC, nud_unary, NULL },		// Prefix
 	[TK_TILDE] = { 70, RIGHT_ASSOC, nud_unary, NULL },	// Prefix
 	[TK_NUMBER] = { 0, LEFT_ASSOC, nud_literal, NULL }, // Literal
 	[TK_STRING] = { 0, LEFT_ASSOC, nud_literal, NULL },
 	[TK_TRUE] = { 0, LEFT_ASSOC, nud_literal, NULL },
 	[TK_FALSE] = { 0, LEFT_ASSOC, nud_literal, NULL },
-	[TK_IDENTIFIER] = { 0, LEFT_ASSOC, nud_literal, NULL },
+	[TK_IDENTIFIER] = { 80, LEFT_ASSOC, nud_literal, led_member_call },
+	[TK_THREAD] = { 80, LEFT_ASSOC, nud_thread_call, led_thread_member_call },
+	[TK_SCOPE_RESOLUTION] = { 0, LEFT_ASSOC, nud_literal, NULL },
 	[TK_UNDEFINED] = { 0, LEFT_ASSOC, nud_literal, NULL },
 };
 
