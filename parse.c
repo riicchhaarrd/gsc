@@ -59,56 +59,40 @@ static void syntax_error(Parser *parser, const char *fmt, ...)
 	exit(-1);
 }
 
-ASTNode *parse_identifier(Parser *parser, Token *t)
+ASTNode *parse_function_name(Parser *parser, Token *t)
 {
-	char id[256];
-	lexer_token_read_string(parser->lexer, t, id, sizeof(id));
-	if(parser->token.type == '\\')
+	if(!t)
 	{
-		NODE(FileReference, n);
-		size_t written = 0;
-		written += snprintf(n->file, sizeof(n->file), "%s", id);
-
-		while(parser->token.type == '\\')
-		{
-			advance(parser, '\\');
-			advance(parser, TK_IDENTIFIER);
-			size_t len = lexer_token_read_string(parser->lexer, &parser->token, parser->string, parser->max_string_length);
-			if(written >= sizeof(n->file))
-			{
-				lexer_error(parser->lexer, "written >= sizeof(n->file)");
-			}
-			strncat(n->file, parser->string, sizeof(n->file) - written - 1);
-			written += len;
-		}
-		return n;
+		t = &parser->token;
 	}
-	NODE(Identifier, n);
-	snprintf(n->name, sizeof(n->name), "%s", id);
-	return n;
-}
-
-ASTNode *parse_function_identifier(Parser *parser, Token *t)
-{
-	ASTNode *ident = parse_identifier(parser, t);
-	if(parser->token.type == TK_SCOPE_RESOLUTION)
+	if(t->type == TK_FILE_REFERENCE)
 	{
+		NODE(FileReference, file_ref);
+		lexer_token_read_string(parser->lexer, t, file_ref->file, sizeof(file_ref->file));
+		if(t == &parser->token)
+			advance(parser, TK_FILE_REFERENCE);
+
 		advance(parser, TK_SCOPE_RESOLUTION);
 
 		NODE(Literal, n);
 		n->type = AST_LITERAL_TYPE_FUNCTION;
-		n->value.function.file = ident;
-		if(ident->type != AST_FILE_REFERENCE)
-		{
-			lexer_error(parser->lexer, "Not a file reference");
-		}
-		advance(parser, TK_IDENTIFIER);
+		n->value.function.file = file_ref;
 		NODE(Identifier, function_ident);
 		lexer_token_read_string(parser->lexer, &parser->token, function_ident->name, sizeof(function_ident->name));
+		advance(parser, TK_IDENTIFIER);
 		n->value.function.function = function_ident;
 		return n;
 	}
-	return ident;
+	NODE(Identifier, n);
+	lexer_token_read_string(parser->lexer, t, n->name, sizeof(n->name));
+	if(t == &parser->token)
+		advance(parser, TK_IDENTIFIER);
+	return n;
+}
+
+ASTNode *nud_file_ref(Parser *parser, Token *t)
+{
+	return parse_function_name(parser, t);
 }
 
 typedef enum
@@ -176,13 +160,25 @@ ASTNode *nud_literal(Parser *parser, Token *t)
 {
 	switch(t->type)
 	{
+		case '&':
+		{
+			NODE(Literal, n);
+			n->type = AST_LITERAL_TYPE_LOCALIZED_STRING;
+			lexer_token_read_string(parser->lexer, &parser->token, parser->string, parser->max_string_length);
+			advance(parser, TK_STRING);
+			n->value.string = strdup(parser->string);
+			return (ASTNode*)n;
+		}
+		break;
+
 		case TK_SCOPE_RESOLUTION:
 		{
 			NODE(Literal, n);
 			n->type = AST_LITERAL_TYPE_FUNCTION;
+			NODE(Identifier, func_name);
+			lexer_token_read_string(parser->lexer, &parser->token, func_name->name, sizeof(func_name->name));
 			advance(parser, TK_IDENTIFIER);
-			lexer_token_read_string(parser->lexer, t, parser->string, parser->max_string_length);
-			n->value.string = strdup(parser->string);
+			n->value.function.function = func_name;
 			return (ASTNode*)n;
 		}
 		break;
@@ -191,8 +187,8 @@ ASTNode *nud_literal(Parser *parser, Token *t)
 		{
 			NODE(Literal, n);
 			n->type = AST_LITERAL_TYPE_ANIMATION;
+			lexer_token_read_string(parser->lexer, &parser->token, parser->string, parser->max_string_length);
 			advance(parser, TK_IDENTIFIER);
-			lexer_token_read_string(parser->lexer, t, parser->string, parser->max_string_length);
 			n->value.string = strdup(parser->string);
 			return (ASTNode*)n;
 		}
@@ -200,13 +196,24 @@ ASTNode *nud_literal(Parser *parser, Token *t)
 
 		case TK_IDENTIFIER:
 		{
-			return parse_function_identifier(parser, t);
+			NODE(Identifier, n);
+			lexer_token_read_string(parser->lexer, t, n->name, sizeof(n->name));
+			return (ASTNode *)n;
 		}
 		break;
 
 		case TK_TRUE: return boolean(parser, true); break;
 		case TK_FALSE: return boolean(parser, false); break;
 		case TK_UNDEFINED: return undefined(parser); break;
+
+		case TK_INTEGER:
+		{
+			NODE(Literal, n);
+			n->type = AST_LITERAL_TYPE_INTEGER;
+			n->value.integer = lexer_token_read_int(parser->lexer, t);
+			return (ASTNode*)n;
+		}
+		break;
 
 		case TK_NUMBER:
 		{
@@ -245,11 +252,9 @@ ASTNode *led_binary(Parser *parser, ASTNode *left, Token *token, int bp)
 
 ASTNode *nud_thread_call(Parser *parser, Token *token)
 {
-	advance(parser, TK_IDENTIFIER);
-	Token t = parser->token;
-	ASTNode *ident = parse_function_identifier(parser, &t);
+	ASTNode *fn = parse_function_name(parser, NULL);
 	advance(parser, '(');
-	ASTNodePtr n = call_expression(parser, ident);
+	ASTNodePtr n = call_expression(parser, fn);
 	n->ast_call_expr_data.threaded = false;
 	n->ast_call_expr_data.object = NULL;
 	return (ASTNode *)n;
@@ -257,11 +262,9 @@ ASTNode *nud_thread_call(Parser *parser, Token *token)
 
 ASTNode *led_thread_member_call(Parser *parser, ASTNode *left, Token *token, int bp)
 {
-	advance(parser, TK_IDENTIFIER);
-	Token t = parser->token;
-	ASTNode *ident = parse_function_identifier(parser, &t);
+	ASTNode *fn = parse_function_name(parser, NULL);
 	advance(parser, '(');
-	ASTNodePtr n = call_expression(parser, ident);
+	ASTNodePtr n = call_expression(parser, fn);
 	n->ast_call_expr_data.threaded = true;
 	n->ast_call_expr_data.object = left;
 	return (ASTNode *)n;
@@ -269,9 +272,9 @@ ASTNode *led_thread_member_call(Parser *parser, ASTNode *left, Token *token, int
 
 ASTNode *led_member_call(Parser *parser, ASTNode *left, Token *token, int bp)
 {
-	ASTNode *ident = parse_function_identifier(parser, token);
+	ASTNode *fn = parse_function_name(parser, token);
 	advance(parser, '(');
-	ASTNodePtr n = call_expression(parser, ident);
+	ASTNodePtr n = call_expression(parser, fn);
 	n->ast_call_expr_data.threaded = false;
 	n->ast_call_expr_data.object = left;
 	return (ASTNode *)n;
@@ -315,14 +318,6 @@ ASTNode *led_bracket(Parser *parser, ASTNode *left, Token *token, int bp)
 ASTNode *led_function(Parser *parser, ASTNode *left, Token *token, int bp)
 {
 	return call_expression(parser, left);
-}
-
-ASTNode *nud_and(Parser *parser, Token *token)
-{
-    NODE(LocalizedString, n);
-	advance(parser, TK_STRING);
-	lexer_token_read_string(parser->lexer, &parser->token, n->reference, sizeof(n->reference));
-	return (ASTNode*)n;
 }
 
 ASTNode *nud_array(Parser *parser, Token *token)
@@ -400,7 +395,7 @@ static const Operator operator_table[TK_MAX] = {
 	[TK_NEQUAL] = { 40, LEFT_ASSOC, NULL, led_binary },
 	[TK_LOGICAL_AND] = { 30, LEFT_ASSOC, NULL, led_binary },
 	[TK_LOGICAL_OR] = { 30, LEFT_ASSOC, NULL, led_binary },
-	[TK_BITWISE_AND] = { 40, LEFT_ASSOC, nud_and, led_binary },
+	[TK_BITWISE_AND] = { 40, LEFT_ASSOC, nud_literal, led_binary },
 	[TK_BITWISE_OR] = { 40, LEFT_ASSOC, NULL, led_binary },
 	[TK_BITWISE_XOR] = { 40, LEFT_ASSOC, NULL, led_binary },
 	[TK_ASSIGN] = { 10, RIGHT_ASSOC, NULL, led_assignment },
@@ -429,10 +424,12 @@ static const Operator operator_table[TK_MAX] = {
 	[TK_NOT] = { 70, RIGHT_ASSOC, nud_unary, NULL },		// Prefix
 	[TK_TILDE] = { 70, RIGHT_ASSOC, nud_unary, NULL },	// Prefix
 	[TK_NUMBER] = { 0, LEFT_ASSOC, nud_literal, NULL }, // Literal
+	[TK_INTEGER] = { 0, LEFT_ASSOC, nud_literal, NULL }, // Literal
 	[TK_STRING] = { 0, LEFT_ASSOC, nud_literal, NULL },
 	[TK_TRUE] = { 0, LEFT_ASSOC, nud_literal, NULL },
 	[TK_FALSE] = { 0, LEFT_ASSOC, nud_literal, NULL },
 	[TK_IDENTIFIER] = { 80, LEFT_ASSOC, nud_literal, led_member_call },
+	[TK_FILE_REFERENCE] = { 80, LEFT_ASSOC, nud_file_ref, led_member_call },
 	[TK_THREAD] = { 80, LEFT_ASSOC, nud_thread_call, led_thread_member_call },
 	[TK_SCOPE_RESOLUTION] = { 0, LEFT_ASSOC, nud_literal, NULL },
 	[TK_UNDEFINED] = { 0, LEFT_ASSOC, nud_literal, NULL },

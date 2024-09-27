@@ -38,6 +38,7 @@ AST_X_MACRO(TYPEDEF_VISIT_ENTRY)
 #define VISIT_ENTRY(UPPER, TYPE, LOWER) Visit##TYPE##Fn visit_ ## LOWER;
 struct ASTVisitor
 {
+    void *ctx;
     AST_X_MACRO(VISIT_ENTRY)
 
 	void (*visit_fallback)(ASTVisitor *, ASTNode *, const char *type);

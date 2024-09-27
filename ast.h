@@ -11,7 +11,7 @@ typedef union
 	float number;
 	float vector[4];
 	bool boolean;
-	union
+	struct
 	{
 		ASTNode *file; // ASTFileReference
 		ASTNode *function; // ASTIdentifier

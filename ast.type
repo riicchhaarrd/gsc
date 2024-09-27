@@ -98,6 +98,7 @@ enum LiteralType
 	Vector,
 	Animation,
 	Function,
+	LocalizedString,
 	Undefined
 };
 
@@ -107,11 +108,11 @@ struct Literal
 	uint32 type;
 	ASTLiteralValue value;
 };
-struct LocalizedString
-{
-	public:
-	char reference[256];
-};
+// struct LocalizedString
+// {
+// 	public:
+// 	char reference[256];
+// };
 struct MemberExpr
 {
 	public:

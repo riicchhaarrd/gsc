@@ -33,7 +33,8 @@
 
 #define TOKENS_(X) \
 	X(IDENTIFIER) \
-	X(STRING) X(NUMBER) X(COMMENT) X(WHITESPACE) \
+	X(FILE_REFERENCE) \
+	X(STRING) X(NUMBER) X(INTEGER) X(COMMENT) X(WHITESPACE) \
 	X(LSHIFT, "<<") \
 	X(RSHIFT, ">>") \
 	X(LOGICAL_AND, "&&") \
@@ -147,6 +148,11 @@ LEXER_STATIC void lexer_init(Lexer *l, Stream *stream)
 
 LEXER_STATIC size_t lexer_token_read_string(Lexer *lexer, Token *t, char *temp, size_t max_temp_size)
 {
+	if(t->length == 0)
+	{
+		temp[0] = 0;
+		return 0;
+	}
 	Stream *ls = lexer->stream;
 	int64_t offset = ls->tell(ls);
 	ls->seek(ls, t->offset, SEEK_SET);
@@ -287,7 +293,7 @@ LEXER_STATIC void lexer_parse_multiline_comment(Lexer *lexer, TokenType type, To
 	t->length = n;
 }
 
-LEXER_STATIC uint32_t lexer_parse_characters(Lexer *lexer, Token *t, TokenType type, bool (*cond)(int ch, bool *undo))
+LEXER_STATIC uint32_t lexer_parse_characters(Lexer *lexer, Token *t, TokenType type, bool (*cond)(Token *t, int ch, bool *undo))
 {
 	uint32_t prime = 0x01000193;
 	uint32_t offset = 0x811c9dc5;
@@ -305,7 +311,7 @@ LEXER_STATIC uint32_t lexer_parse_characters(Lexer *lexer, Token *t, TokenType t
 			break;
 		}
 		bool undo = false;
-		if(cond(ch, &undo))
+		if(cond(t, ch, &undo))
 		{
 			if(undo)
 			{
@@ -325,13 +331,13 @@ LEXER_STATIC uint32_t lexer_parse_characters(Lexer *lexer, Token *t, TokenType t
 	return hash;
 }
 
-LEXER_STATIC bool cond_string_(int ch, bool *undo)
+LEXER_STATIC bool cond_string_(Token *t, int ch, bool *undo)
 {
 	*undo = false;
 	return ch == '"';
 }
 
-LEXER_STATIC bool cond_numeric_(int ch, bool *undo)
+LEXER_STATIC bool cond_numeric_(Token *t, int ch, bool *undo)
 {
 	*undo = true;
 
@@ -339,9 +345,6 @@ LEXER_STATIC bool cond_numeric_(int ch, bool *undo)
 		return false;
 
 	if(ch >= '0' && ch <= '9') // Decimal
-		return false;
-
-	if(ch == '.' || ch == 'f') // Floating point and 'f' postfix
 		return false;
 
 	if(ch == 'e') // Scientific notation
@@ -356,10 +359,16 @@ LEXER_STATIC bool cond_numeric_(int ch, bool *undo)
 	if(ch >= 'A' && ch <= 'F') // Hexadecimal
 		return false;
 
+	if(ch == '.' || ch == 'f') // Floating point and 'f' postfix
+	{
+		t->type = TK_NUMBER;
+		return false;
+	}
+
 	return true;
 }
 
-LEXER_STATIC bool cond_ident_(int ch, bool *undo)
+LEXER_STATIC bool cond_ident_(Token *t, int ch, bool *undo)
 {
 	*undo = true;
 	if(ch >= 'a' && ch <= 'z')
@@ -373,14 +382,22 @@ LEXER_STATIC bool cond_ident_(int ch, bool *undo)
 	return true;
 }
 
-LEXER_STATIC bool cond_single_line_comment_(int ch, bool *undo)
+LEXER_STATIC bool cond_file_ref_(Token *t, int ch, bool *undo)
+{
+	*undo = true;
+	if(ch == '\\')
+		return false;
+	return cond_ident_(t, ch, undo);
+}
+
+LEXER_STATIC bool cond_single_line_comment_(Token *t, int ch, bool *undo)
 {
 	*undo = true;
 	//\0 is implicitly handled by the if(!ch) check in lexer_parse_characters
 	return ch == '\r' || ch == '\n';
 }
 
-LEXER_STATIC bool cond_whitespace_(int ch, bool *undo)
+LEXER_STATIC bool cond_whitespace_(Token *t, int ch, bool *undo)
 {
 	*undo = true;
 	return !(ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t');
@@ -616,17 +633,22 @@ repeat:
 			if(ch >= '0' && ch <= '9')
 			{
 				lexer_unget(lexer, t);
-				lexer_parse_characters(lexer, t, TK_NUMBER, cond_numeric_);
+				lexer_parse_characters(lexer, t, TK_INTEGER, cond_numeric_);
 			}
 			else if((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_')
 			{
 				lexer_unget(lexer, t);
 				lexer_match_identifier(lexer, t, lexer_parse_characters(lexer, t, TK_IDENTIFIER, cond_ident_));
+				if(t->type == TK_IDENTIFIER && lexer_match_char(lexer, '\\'))
+				{
+					lexer_unget(lexer, t);
+					lexer_parse_characters(lexer, t, TK_FILE_REFERENCE, cond_file_ref_);
+				}
 			}
 		}
 		break;
 	}
-	if(t->length == 0)
+	if(t->length == 0 && t->type != TK_STRING && t->type != TK_COMMENT) // Ignore "container" type tokens
 	{
 		t->length = s->tell(s) - t->offset;
 	}

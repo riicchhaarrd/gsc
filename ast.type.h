@@ -10,7 +10,6 @@
 	X(AST_FILE_REFERENCE, ASTFileReference, ast_file_reference) \
 	X(AST_IDENTIFIER, ASTIdentifier, ast_identifier) \
 	X(AST_LITERAL, ASTLiteral, ast_literal) \
-	X(AST_LOCALIZED_STRING, ASTLocalizedString, ast_localized_string) \
 	X(AST_MEMBER_EXPR, ASTMemberExpr, ast_member_expr) \
 	X(AST_UNARY_EXPR, ASTUnaryExpr, ast_unary_expr) \
 	X(AST_VECTOR_EXPR, ASTVectorExpr, ast_vector_expr) \
@@ -113,6 +112,7 @@ typedef enum
 	AST_LITERAL_TYPE_VECTOR,
 	AST_LITERAL_TYPE_ANIMATION,
 	AST_LITERAL_TYPE_FUNCTION,
+	AST_LITERAL_TYPE_LOCALIZED_STRING,
 	AST_LITERAL_TYPE_UNDEFINED
 } ASTLiteralType;
 
@@ -121,11 +121,6 @@ typedef struct
 	uint32 type;
 	ASTLiteralValue value;
 } ASTLiteral;
-
-typedef struct
-{
-	char reference[256];
-} ASTLocalizedString;
 
 typedef struct
 {
@@ -434,17 +429,6 @@ static size_t ASTLiteral_visit(AstVisitor *visitor, const char *key, ASTLiteral 
 	return changed_count;
 }
 
-static size_t ASTLocalizedString_visit(AstVisitor *visitor, const char *key, ASTLocalizedString *inst, size_t nmemb, size_t size)
-{
-	size_t changed_count = 0;
-	size_t n = 0;
-	if(visitor->pre_visit(visitor, "reference", 0x62a7ba7a, (void**)&inst->reference, NULL, sizeof(inst->reference[0])))
-	{
-		changed_count += visitor->visit_char(visitor, "reference", (char*)&inst->reference[0], 256, sizeof(inst->reference[0]));
-	}
-	return changed_count;
-}
-
 static size_t ASTMemberExpr_visit(AstVisitor *visitor, const char *key, ASTMemberExpr *inst, size_t nmemb, size_t size)
 {
 	size_t changed_count = 0;
@@ -741,10 +725,6 @@ static void ASTIdentifier_init(ASTIdentifier *inst)
 }
 
 static void ASTLiteral_init(ASTLiteral *inst)
-{
-}
-
-static void ASTLocalizedString_init(ASTLocalizedString *inst)
 {
 }
 

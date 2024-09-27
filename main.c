@@ -5,6 +5,11 @@
 #include "visitor.h"
 #include <core/ds/hash_table.h>
 
+typedef struct
+{
+	int depth;
+} ASTVisitorContext;
+
 static ASTVisitor visitor;
 
 #define DISK
@@ -350,15 +355,8 @@ static void parse(Parser *parser, ASTProgram *prog)
 				printf("ident:%s\n",ident);
 				if(!strcmp(ident, "include"))
 				{
-					ASTNode *parse_identifier(Parser * parser, Token * t);
-					// const char *path = string(parser, TK_IDENTIFIER);
-					advance(parser, TK_IDENTIFIER);
-					ASTNode *path = parse_identifier(parser, &parser->token);
-					if(path->type != AST_FILE_REFERENCE)
-					{
-						lexer_error(parser->lexer, "Expected file reference for include");
-					}
-					printf("path:%s\n", path->ast_file_reference_data.file);
+					const char *path = string(parser, TK_FILE_REFERENCE);
+					printf("path:%s\n", path);
 				} else if(!strcmp(ident, "using_animtree"))
 				{
 					advance(parser, '(');
@@ -467,12 +465,12 @@ static void parse_line(const char *line)
 	hash_table_init(&prog.ht, 12);
 	parse(&parser, &prog);
 
-	HashTableEntry *it = prog.ht.tail;
+	HashTableEntry *it = prog.ht.head;
 	while(it)
 	{
 		// TODO: reverse iteration order
 		visit_node(&visitor, it->value);
-		it = it->prev;
+		it = it->next;
 	}
 }
 
@@ -495,11 +493,28 @@ static void parse_file(const char *path)
 }
 #define IMPL_VISIT(TYPE) static void visit_##TYPE##_(ASTVisitor *v, ASTNode *ast_node, TYPE *n)
 
+static void indent_printf(ASTVisitor *v, const char *fmt, ...)
+{
+	ASTVisitorContext *ctx = (ASTVisitorContext*)v->ctx;
+	char message[2048];
+	va_list va;
+	va_start(va, fmt);
+	vsnprintf(message, sizeof(message), fmt, va);
+	va_end(va);
+	printf("%.*s%s", ctx->depth, "\t", message);
+}
+
 static void print_operator(int op)
 {
 	// printf("op:%d\n",op);
 	if(op < 255)
+	{
 		printf("%c", op & 0xff);
+		// if(op == '.' || op == '[')
+		// 	printf("%c", op & 0xff);
+		// else
+		// 	printf(" %c ", op & 0xff);
+	}
 	else
 	{
 		static const char *operators[TK_MAX] = {
@@ -511,7 +526,10 @@ static void print_operator(int op)
 			[TK_PLUS_ASSIGN] = "+=", [TK_EQUAL] = "==",			 [TK_NEQUAL] = "!=",
 			[TK_GEQUAL] ">=",		 [TK_LEQUAL] = "<=",		 NULL
 		};
-		printf("%s", operators[op] ? operators[op] : "?");
+		if(op == TK_INCREMENT || op == TK_DECREMENT)
+			printf("%s", operators[op]);
+		else
+			printf(" %s ", operators[op] ? operators[op] : "?");
 	}
 }
 IMPL_VISIT(ASTMemberExpr)
@@ -524,27 +542,32 @@ IMPL_VISIT(ASTMemberExpr)
 		printf("]");
 	}
 }
-IMPL_VISIT(ASTLocalizedString)
-{
-	printf("%s", n->reference);
-}
+// IMPL_VISIT(ASTLocalizedString)
+// {
+// 	printf("%s", n->reference);
+// }
 IMPL_VISIT(ASTUnaryExpr)
 {
-	printf("%c", n->op < 255 ? n->op : '?');
+	print_operator(n->op);
 	visit_node(v, n->argument);
 }
+
 IMPL_VISIT(ASTExprStmt)
 {
+	ASTVisitorContext *ctx = (ASTVisitorContext*)v->ctx;
+	ctx->depth++;
+	indent_printf(v, "");
 	visit_node(v, n->expression);
 	printf(";\n");
+	ctx->depth--;
 }
 IMPL_VISIT(ASTReturnStmt)
 {
 	if(!n->argument)
-		printf("return;");
+		indent_printf(v, "return;");
 	else
 	{
-		printf("return ");
+		indent_printf(v, "return ");
 		visit_node(v, n->argument);
 		printf(";");
 	}
@@ -552,15 +575,44 @@ IMPL_VISIT(ASTReturnStmt)
 }
 IMPL_VISIT(ASTIfStmt)
 {
-	printf("\nif(");
+	printf("\n");
+	indent_printf(v, "if(");
 	visit_node(v, n->test);
 	printf(")\n");
+
 	visit_node(v, n->consequent);
+
 	if(n->alternative)
 	{
-		printf("\nelse\n");
+		indent_printf(v, "else\n");
 		visit_node(v, n->alternative);
 	}
+}
+IMPL_VISIT(ASTFileReference)
+{
+	printf("%s", n->file);
+}
+IMPL_VISIT(ASTWhileStmt)
+{
+	printf("\n");
+	indent_printf(v, "while(");
+	visit_node(v, n->test);
+	printf(")\n");
+
+	visit_node(v, n->body);
+}
+IMPL_VISIT(ASTForStmt)
+{
+	printf("\n");
+	indent_printf(v, "for(");
+	visit_node(v, n->init);
+	printf("; ");
+	visit_node(v, n->test);
+	printf("; ");
+	visit_node(v, n->update);
+	indent_printf(v, ")\n");
+
+	visit_node(v, n->body);
 }
 IMPL_VISIT(ASTGroupExpr)
 {
@@ -596,6 +648,29 @@ IMPL_VISIT(ASTLiteral)
 			printf("\"%s\"", n->value.string);
 		}
 		break;
+		case AST_LITERAL_TYPE_ANIMATION:
+		{
+			printf("%%s", n->value.string);
+		}
+		break;
+		case AST_LITERAL_TYPE_LOCALIZED_STRING:
+		{
+			printf("&\"%s\"", n->value.string);
+		}
+		break;
+		case AST_LITERAL_TYPE_UNDEFINED:
+		{
+			printf("undefined");
+		}
+		break;
+		case AST_LITERAL_TYPE_FUNCTION:
+		{
+			if(n->value.function.file)
+				visit_node(v, n->value.function.file);
+			printf("::");
+			visit_node(v, n->value.function.function);
+		}
+		break;
 		default:
 		{
 			printf("unhandled literal %d", n->type);
@@ -612,7 +687,9 @@ IMPL_VISIT(ASTBinaryExpr)
 }
 IMPL_VISIT(ASTBlockStmt)
 {
-	printf("{\n");
+	ASTVisitorContext *ctx = (ASTVisitorContext*)v->ctx;
+	ctx->depth++;
+	indent_printf(v, "{\n");
 	ASTNode **it = &n->body;
 	while(*it)
 	{
@@ -623,7 +700,8 @@ IMPL_VISIT(ASTBlockStmt)
 	// {
 	// 	visit_node(v, n->body[i]);
 	// }
-	printf("}\n");
+	indent_printf(v, "}\n");
+	ctx->depth--;
 }
 IMPL_VISIT(ASTAssignmentExpr)
 {
@@ -660,6 +738,8 @@ IMPL_VISIT(ASTCallExpr)
 	for(size_t i = 0; i < n->numarguments; ++i)
 	{
 		visit_node(v, n->arguments[i]);
+		if(i + 1 < n->numarguments)
+			printf(", ");
 	}
 	printf(")");
 }
@@ -671,12 +751,14 @@ static void visit_fallback(ASTVisitor *v, ASTNode *n, const char *type)
 
 int main(int argc, char **argv)
 {
+	ASTVisitorContext ctx = { 0 };
+	visitor.ctx = &ctx;
 	visitor.visit_fallback = visit_fallback;
 	visitor.visit_ast_block_stmt = visit_ASTBlockStmt_;
 	visitor.visit_ast_call_expr = visit_ASTCallExpr_;
 	visitor.visit_ast_identifier = visit_ASTIdentifier_;
 	visitor.visit_ast_literal = visit_ASTLiteral_;
-	visitor.visit_ast_localized_string = visit_ASTLocalizedString_;
+	// visitor.visit_ast_localized_string = visit_ASTLocalizedString_;
 	visitor.visit_ast_member_expr = visit_ASTMemberExpr_;
 	visitor.visit_ast_unary_expr = visit_ASTUnaryExpr_;
 	visitor.visit_ast_expr_stmt = visit_ASTExprStmt_;
@@ -687,6 +769,9 @@ int main(int argc, char **argv)
 	visitor.visit_ast_if_stmt = visit_ASTIfStmt_;
 	visitor.visit_ast_vector_expr = visit_ASTVectorExpr_;
 	visitor.visit_ast_return_stmt = visit_ASTReturnStmt_;
+	visitor.visit_ast_file_reference = visit_ASTFileReference_;
+	visitor.visit_ast_for_stmt = visit_ASTForStmt_;
+	visitor.visit_ast_while_stmt = visit_ASTWhileStmt_;
 	// visitor.visit_ast_function_ptr = visit_ASTFunctionPtr_;
 
 	assert(argc > 1);
