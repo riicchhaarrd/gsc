@@ -4,6 +4,21 @@
 #include <assert.h>
 #include "visitor.h"
 #include <core/ds/hash_table.h>
+#include "interpreter.h"
+#include "traverse.h"
+
+typedef struct
+{
+	HashTable functions; // ASTFunction
+	bool parsed;
+	char path[256];
+} ASTFile;
+
+typedef struct
+{
+	HashTable files; // ASTFile
+	char base_path[256];
+} ASTProgram;
 
 static ASTVisitor visitor;
 
@@ -146,6 +161,14 @@ static ASTNode *statement(Parser *parser)
 		}
 		break;
 
+		case ';':
+		{
+			advance(parser, ';');
+			NODE(EmptyStmt, stmt);
+			n = stmt;
+		}
+		break;
+
 		case TK_COMMENT:
 		{
 			advance(parser, TK_COMMENT);
@@ -215,6 +238,16 @@ static ASTNode *statement(Parser *parser)
 			n = stmt;
 			advance(parser, TK_WAIT);
 			stmt->duration = expression(parser);
+			advance(parser, ';');
+		}
+		break;
+
+		case TK_WAITTILLFRAMEEND:
+		{
+			NODE(WaitStmt, stmt);
+			n = stmt;
+			advance(parser, TK_WAITTILLFRAMEEND);
+			stmt->duration = NULL;
 			advance(parser, ';');
 		}
 		break;
@@ -353,13 +386,33 @@ static ASTNode *body(Parser *parser)
 	return statement(parser);
 }
 
-typedef struct
+static ASTFile *add_file(ASTProgram *program, const char *path)
 {
-	HashTable ht;
-} ASTProgram;
+	HashTableEntry *entry = hash_table_find(&program->files, path);
+	if(!entry)
+	{
+		ASTFile *file = malloc(sizeof(ASTFile));
+		memset(file, 0, sizeof(ASTFile));
+		snprintf(file->path, sizeof(file->path), "%s", path);
+		for(size_t i = 0; file->path[i]; ++i)
+		{
+			if(file->path[i] == '\\')
+			{
+				file->path[i] = '/';
+			}
+		}
+		hash_table_init(&file->functions, 10); // 1024 function limit for now
 
-static void parse(Parser *parser, ASTProgram *prog)
+		entry = hash_table_insert(&program->files, path);
+		entry->value = file;
+	}
+	return entry->value;
+}
+
+static void parse(Parser *parser, ASTProgram *prog, ASTFile *file)
 {
+	if(file->parsed)
+		return;
 	// while(lexer_step(parser->lexer, &parser->token))
 	char type[64];
 	while(parser->token.type != 0)
@@ -376,6 +429,7 @@ static void parse(Parser *parser, ASTProgram *prog)
 				{
 					const char *path = string(parser, TK_FILE_REFERENCE);
 					printf("path:%s\n", path);
+					add_file(prog, path);
 				} else if(!strcmp(ident, "using_animtree"))
 				{
 					advance(parser, '(');
@@ -415,10 +469,10 @@ static void parse(Parser *parser, ASTProgram *prog)
 				func->body = block(parser);
 				// visit_node(&visitor, func->body);
 
-				HashTableEntry *entry = hash_table_insert(&prog->ht, func->name);
+				HashTableEntry *entry = hash_table_insert(&file->functions, func->name);
 				if(entry->value)
 				{
-					lexer_error(parser->lexer, "Function '%s' already defined", func->name);
+					lexer_error(parser->lexer, "Function '%s' already defined for '%s'", func->name, file->path);
 				}
 				entry->value = func;
 			}
@@ -437,6 +491,7 @@ static void parse(Parser *parser, ASTProgram *prog)
 			break;
 		}
 	}
+	file->parsed = true;
 }
 
 static void tokenize(Lexer *lexer)
@@ -452,7 +507,7 @@ static void tokenize(Lexer *lexer)
 	}
 }
 
-static void parse_line(const char *line)
+static void parse_line(const char *line, ASTProgram *program, ASTFile *file)
 {
 	char string[16384];
 	Stream s = { 0 };
@@ -466,7 +521,7 @@ static void parse_line(const char *line)
 	jmp_buf jmp;
 	if(setjmp(jmp))
 	{
-		printf("ERROR\n");
+		printf("ERROR '%s'\n", file->path);
 		exit(-1);
 	}
 	l.jmp = &jmp;
@@ -480,23 +535,47 @@ static void parse_line(const char *line)
 	// tokenize(parser.lexer);
 	// getchar();
 	lexer_step(parser.lexer, &parser.token);
-	ASTProgram prog = { 0 };
-	hash_table_init(&prog.ht, 12);
-	parse(&parser, &prog);
+	parse(&parser, program, file);
 
-	HashTableEntry *it = prog.ht.head;
-	while(it)
-	{
-		// TODO: reverse iteration order
-		visit_node(&visitor, it->value);
-		it = it->next;
-	}
+	// HashTableEntry *it = file.ht.head;
+	// while(it)
+	// {
+	// 	// TODO: reverse iteration order
+	// 	visit_node(&visitor, it->value);
+	// 	it = it->next;
+	// }
 }
 
-static void parse_file(const char *path)
+static bool node_fn(ASTNode *n, void *ctx)
 {
+	if(n->type != AST_FILE_REFERENCE)
+		return false;
+	ASTProgram *prog = ctx;
+	add_file(prog, n->ast_file_reference_data.file);
+	return false;
+}
+
+static bool parse_file(const char *filename, ASTProgram *program)
+{
+
+	char path[512];
+	snprintf(path, sizeof(path), "%s%s.gsc", program->base_path, filename);
+	
+	ASTFile *file = add_file(program, filename);
 	unsigned char *data = read_text_file(path);
-	parse_line(data);
+	if(!data)
+	{
+		printf("Can't read '%s'\n", filename);
+		return false;
+	}
+	parse_line(data, program, file);
+
+	for(HashTableEntry *it = file->functions.head; it; it = it->next)
+	{
+		ASTFunction *func = it->value;
+		traverse(func, node_fn, program);
+	}
+
 	// Stream s = { 0 };
 	// StreamBuffer sb = { 0 };
 	// init_stream_from_buffer(&s, &sb, data, strlen(data) + 1);
@@ -509,21 +588,69 @@ static void parse_file(const char *path)
 	// {
     // 	parse_line(line);
 	// }
+	return true;
+}
+
+static void dump_function(ASTFile *file, ASTFunction *func)
+{
+	// printf("\tfunc: %s::%s\n", file->path, func->name);
+}
+
+static void dump_file(ASTFile *file)
+{
+	if(file->parsed)
+		printf("file: %s [parsed]\n", file->path);
+	else
+		printf("file: %s\n", file->path);
+	for(HashTableEntry *it = file->functions.head; it; it = it->next)
+	{
+		dump_function(file, it->value);
+	}
+}
+
+static void dump_program(ASTProgram *prog)
+{
+	for(HashTableEntry *it = prog->files.head; it; it = it->next)
+	{
+		dump_file(it->value);
+	}
 }
 
 int main(int argc, char **argv)
 {
 
-	void ast_visitor_compiler_init(ASTVisitor *v);
-	void ast_visitor_gsc_init(ASTVisitor *v);
-	ast_visitor_compiler_init(&visitor);
+	jmp_buf jmp;
+	if(setjmp(jmp))
+	{
+		return 0;
+	}
 
+	void ast_visitor_interpreter_init(ASTVisitor *v, Interpreter *interp);
+	Interpreter interp = { 0 };
+	hash_table_init(&interp.stringtable, 16);
+	interp.jmp = &jmp;
+	void ast_visitor_compiler_init(ASTVisitor * v, jmp_buf * jmp);
+	void ast_visitor_gsc_init(ASTVisitor *v);
+	// ast_visitor_compiler_init(&visitor, &jmp);
+	ast_visitor_interpreter_init(&visitor, &interp);
 	assert(argc > 1);
 	#ifdef DISK
 	static const char *base_path = "scripts/";
-	char path[512];
-	snprintf(path, sizeof(path), "%s%s.gsc", base_path, argv[1]);
-	parse_file(path);
+	
+	ASTProgram *program = malloc(sizeof(ASTProgram));
+	snprintf(program->base_path, sizeof(program->base_path), "%s", base_path);
+
+	hash_table_init(&program->files, 10);
+	parse_file(argv[1], program);
+
+	for(HashTableEntry *it = program->files.head; it; it = it->next)
+	{
+		ASTFile *f = it->value;
+		if(f->parsed)
+			continue;
+		parse_file(f->path, program);
+	}
+	dump_program(program);
 	#else
 	char line[16384];
 	while(fgets(line, sizeof(line), stdin))

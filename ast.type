@@ -27,6 +27,12 @@ struct Function
 	ASTNodePtr body;
 };
 
+struct FunctionPointerExpr
+{
+	public:
+	ASTNodePtr expression;
+};
+
 // struct Program
 // {
 // 	ASTNodePtr functions[?];

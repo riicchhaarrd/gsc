@@ -1,6 +1,7 @@
 #ifndef AST_X_MACRO
 #define AST_X_MACRO(X) \
 	X(AST_FUNCTION, ASTFunction, ast_function) \
+	X(AST_FUNCTION_POINTER_EXPR, ASTFunctionPointerExpr, ast_function_pointer_expr) \
 	X(AST_ARRAY_EXPR, ASTArrayExpr, ast_array_expr) \
 	X(AST_GROUP_EXPR, ASTGroupExpr, ast_group_expr) \
 	X(AST_ASSIGNMENT_EXPR, ASTAssignmentExpr, ast_assignment_expr) \
@@ -50,6 +51,11 @@ typedef struct
 	char name[256];
 	ASTNodePtr body;
 } ASTFunction;
+
+typedef struct
+{
+	ASTNodePtr expression;
+} ASTFunctionPointerExpr;
 
 typedef struct
 {
@@ -282,6 +288,17 @@ static size_t ASTFunction_visit(AstVisitor *visitor, const char *key, ASTFunctio
 	if(visitor->pre_visit(visitor, "body", 0xc6c93295, NULL, NULL, sizeof(inst->body)))
 	{
 		changed_count += visitor->visit_ASTNodePtr(visitor, "body", (ASTNodePtr*)&inst->body, 1, sizeof(inst->body));
+	}
+	return changed_count;
+}
+
+static size_t ASTFunctionPointerExpr_visit(AstVisitor *visitor, const char *key, ASTFunctionPointerExpr *inst, size_t nmemb, size_t size)
+{
+	size_t changed_count = 0;
+	size_t n = 0;
+	if(visitor->pre_visit(visitor, "expression", 0x8a3083cb, NULL, NULL, sizeof(inst->expression)))
+	{
+		changed_count += visitor->visit_ASTNodePtr(visitor, "expression", (ASTNodePtr*)&inst->expression, 1, sizeof(inst->expression));
 	}
 	return changed_count;
 }
@@ -687,6 +704,10 @@ static void type_ast_visitor_init(AstVisitor *v, void *ctx)
 // ============           INITIALIZATION         ==================
 
 static void ASTFunction_init(ASTFunction *inst)
+{
+}
+
+static void ASTFunctionPointerExpr_init(ASTFunctionPointerExpr *inst)
 {
 }
 

@@ -269,7 +269,7 @@ LEXER_STATIC void lexer_parse_string(Lexer *lexer, Token *t)
 	t->length = n;
 }
 
-LEXER_STATIC void lexer_parse_multiline_comment(Lexer *lexer, TokenType type, Token *t)
+LEXER_STATIC void lexer_parse_multiline_comment(Lexer *lexer, TokenType type, Token *t, int initial_char)
 {
 	t->type = type;
 	t->offset = lexer->stream->tell(lexer->stream);
@@ -279,7 +279,7 @@ LEXER_STATIC void lexer_parse_multiline_comment(Lexer *lexer, TokenType type, To
 		int ch = lexer_advance(lexer);
 		if(!ch)
 			break;
-		if(ch == '*')
+		if(ch == initial_char)
 		{
 			int second = lexer_advance(lexer);
 			if(second == '/')
@@ -341,8 +341,8 @@ LEXER_STATIC bool cond_numeric_(Token *t, int ch, bool *undo)
 {
 	*undo = true;
 
-	if(ch == '-')
-		return false;
+	// if(ch == '-') // Removed because it would parse 1- as a number instead of 2 tokens '1' and '-'
+	// 	return false;
 
 	if(ch >= '0' && ch <= '9') // Decimal
 		return false;
@@ -612,9 +612,9 @@ repeat:
 				if(!(lexer->flags & LEXER_FLAG_TOKENIZE_COMMENTS))
 					goto repeat;
 			}
-			else if(ch == '*')
+			else if(ch == '*' || ch == '#') // Treat /# as comment for now
 			{
-				lexer_parse_multiline_comment(lexer, TK_COMMENT, t);
+				lexer_parse_multiline_comment(lexer, TK_COMMENT, t, ch);
 				if(!(lexer->flags & LEXER_FLAG_TOKENIZE_COMMENTS))
 					goto repeat;
 			}

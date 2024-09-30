@@ -65,7 +65,22 @@ ASTNode *parse_function_name(Parser *parser, Token *t)
 	{
 		t = &parser->token;
 	}
-	if(t->type == TK_FILE_REFERENCE)
+	if(t->type == '[')
+	{
+		if(t == &parser->token)
+		{
+			advance(parser, '[');
+			advance(parser, '[');
+		}
+		NODE(FunctionPointerExpr, n);
+		n->expression = expression(parser);
+		if(t == &parser->token)
+		{
+			advance(parser, ']');
+			advance(parser, ']');
+		}
+		return n;
+	} else if(t->type == TK_FILE_REFERENCE)
 	{
 		NODE(FileReference, file_ref);
 		lexer_token_read_string(parser->lexer, t, file_ref->file, sizeof(file_ref->file));
@@ -120,7 +135,7 @@ ASTNode *call_expression(Parser *parser, ASTNode *callee)
 	NODE(CallExpr, n);
 	// Stream *s = parser->lexer->stream;
 	// int64_t current = s->tell(s);
-	size_t cap = 16;
+	size_t cap = 32;
 	n->callee = callee;
 	n->arguments = malloc(sizeof(ASTNode*) * cap);
 	size_t nargs = 0;
@@ -307,6 +322,20 @@ ASTNode *led_member(Parser *parser, ASTNode *left, Token *token, int bp)
 
 ASTNode *led_bracket(Parser *parser, ASTNode *left, Token *token, int bp)
 {
+	if(parser->token.type == '[')
+	{
+		advance(parser, '[');
+		NODE(FunctionPointerExpr, fp);
+		fp->expression = expression(parser);
+		advance(parser, ']');
+		advance(parser, ']');
+		// advance(parser, '(');
+		// ASTNodePtr n = call_expression(parser, fp);
+		// n->ast_call_expr_data.threaded = false;
+		// n->ast_call_expr_data.object = left;
+		// return (ASTNode *)n;
+		return (ASTNode*)fp;
+	}
     NODE(MemberExpr, n);
 	n->object = left;
 	n->op = token->type;
@@ -322,6 +351,15 @@ ASTNode *led_function(Parser *parser, ASTNode *left, Token *token, int bp)
 
 ASTNode *nud_array(Parser *parser, Token *token)
 {
+	if(parser->token.type == '[')
+	{
+		advance(parser, '[');
+		NODE(FunctionPointerExpr, fp);
+		fp->expression = expression(parser);
+		advance(parser, ']');
+		advance(parser, ']');
+		return (ASTNode*)fp;
+	}
 	NODE(ArrayExpr, n);
 	n->numelements = 0;
 	if(parser->token.type == ']')
