@@ -4,21 +4,10 @@
 #include <assert.h>
 #include "visitor.h"
 #include <core/ds/hash_table.h>
-#include "interpreter.h"
+// #include "interpreter.h"
 #include "traverse.h"
-
-typedef struct
-{
-	HashTable functions; // ASTFunction
-	bool parsed;
-	char path[256];
-} ASTFile;
-
-typedef struct
-{
-	HashTable files; // ASTFile
-	char base_path[256];
-} ASTProgram;
+#include "compiler.h"
+#include "vm.h"
 
 static ASTVisitor visitor;
 
@@ -555,7 +544,7 @@ static bool node_fn(ASTNode *n, void *ctx)
 	return false;
 }
 
-static bool parse_file(const char *filename, ASTProgram *program)
+static ASTFile *parse_file(const char *filename, ASTProgram *program)
 {
 
 	char path[512];
@@ -566,7 +555,7 @@ static bool parse_file(const char *filename, ASTProgram *program)
 	if(!data)
 	{
 		printf("Can't read '%s'\n", filename);
-		return false;
+		return NULL;
 	}
 	parse_line(data, program, file);
 
@@ -588,7 +577,7 @@ static bool parse_file(const char *filename, ASTProgram *program)
 	// {
     // 	parse_line(line);
 	// }
-	return true;
+	return file;
 }
 
 static void dump_function(ASTFile *file, ASTFunction *func)
@@ -615,24 +604,129 @@ static void dump_program(ASTProgram *prog)
 		dump_file(it->value);
 	}
 }
+int get_memory_usage_kb()
+{
+	FILE *file = fopen("/proc/self/status", "r");
+	if(!file)
+	{
+		return -1;
+	}
+
+	int memory_usage_kb = -1;
+	char line[256];
+
+	while(fgets(line, sizeof(line), file))
+	{
+		if(strncmp(line, "VmRSS:", 6) == 0)
+		{
+			sscanf(line, "VmRSS: %d kB", &memory_usage_kb);
+			break;
+		}
+	}
+
+	fclose(file);
+	return memory_usage_kb;
+}
+
+typedef struct
+{
+	Instruction *instructions;
+} CompiledFunction;
+
+typedef struct
+{
+	HashTable functions;
+} CompiledFile;
+
+static HashTable compiled_files;
+
+CompiledFile *get_file(const char *name)
+{
+	HashTableEntry *entry = hash_table_find(&compiled_files, name);
+	if(!entry)
+		return NULL;
+	return entry->value;
+}
+
+CompiledFunction *get_function(CompiledFile *cf, const char *name)
+{
+	if(!cf)
+		return NULL;
+	HashTableEntry *entry = hash_table_find(&cf->functions, name);
+	if(!entry)
+		return NULL;
+	return entry->value;
+}
+
+void compile_file(Compiler *c, ASTFile *file)
+{
+	CompiledFile *cf = calloc(1, sizeof(CompiledFile));
+	hash_table_init(&cf->functions, 16);
+	for(HashTableEntry *it = file->functions.head; it; it = it->next)
+	{
+		ASTFunction *f = it->value;
+		Instruction *ins = compile_function(c, f);
+		if(!ins)
+			continue;
+		CompiledFunction *compfunc = malloc(sizeof(CompiledFunction));
+		compfunc->instructions = ins;
+		// printf("file:%s,instr:%d,name:%s,%d funcs,ast funcs:%d\n",file->path,buf_size(ins),f->name,cf->functions.length,file->functions.length);
+		HashTableEntry *func_entry = hash_table_insert(&cf->functions, f->name);
+		if(func_entry)
+		{
+			func_entry->value = compfunc;
+		}
+	}
+	hash_table_insert(&compiled_files, file->path)->value = cf;
+}
+
+Instruction *vm_func_lookup(void *ctx, const char *file, const char *function)
+{
+	CompiledFile *cf = get_file(file);
+	if(!cf)
+		return NULL;
+	CompiledFunction *compfunc = get_function(cf, function);
+	if(!compfunc)
+		return NULL;
+	return compfunc->instructions;
+}
+
+static int cf_setexpfog(VM *vm)
+{
+	int argc = vm_checkinteger(vm, 0);
+	for(int i = 0; i < argc; ++i)
+	{
+		printf("%f\n", vm_checkfloat(vm, i + 1));
+	}
+	return 0;
+}
+static int cf_getcvar(VM *vm)
+{
+	const char *var = vm_checkstring(vm, 1);
+	printf("getcvar %s\n", var);
+	return 0;
+}
+static void register_c_functions(VM *vm)
+{
+	vm_register_c_function(vm, "setexpfog", cf_setexpfog);
+	vm_register_c_function(vm, "getcvar", cf_getcvar);
+}
 
 int main(int argc, char **argv)
 {
-
+	hash_table_init(&compiled_files, 12);
+	
 	jmp_buf jmp;
 	if(setjmp(jmp))
 	{
 		return 0;
 	}
-
-	void ast_visitor_interpreter_init(ASTVisitor *v, Interpreter *interp);
-	Interpreter interp = { 0 };
-	hash_table_init(&interp.stringtable, 16);
-	interp.jmp = &jmp;
-	void ast_visitor_compiler_init(ASTVisitor * v, jmp_buf * jmp);
+	// Interpreter interp = { 0 };
+	// hash_table_init(&interp.stringtable, 16);
+	// interp.jmp = &jmp;
 	void ast_visitor_gsc_init(ASTVisitor *v);
-	// ast_visitor_compiler_init(&visitor, &jmp);
-	ast_visitor_interpreter_init(&visitor, &interp);
+	Compiler compiler = { 0 };
+	compiler_init(&compiler, &jmp);
 	assert(argc > 1);
 	#ifdef DISK
 	static const char *base_path = "scripts/";
@@ -641,16 +735,57 @@ int main(int argc, char **argv)
 	snprintf(program->base_path, sizeof(program->base_path), "%s", base_path);
 
 	hash_table_init(&program->files, 10);
-	parse_file(argv[1], program);
+	ASTFile *file = parse_file(argv[1], program);
+	// for(HashTableEntry *it = program->files.head; it; it = it->next)
+	// {
+	// 	ASTFile *f = it->value;
+	// 	if(f->parsed)
+	// 		continue;
+	// 	parse_file(f->path, program);
+	// }
 
+	// Compile all functions
 	for(HashTableEntry *it = program->files.head; it; it = it->next)
 	{
 		ASTFile *f = it->value;
-		if(f->parsed)
+		if(!f->parsed)
 			continue;
-		parse_file(f->path, program);
+		compile_file(&compiler, f);
 	}
-	dump_program(program);
+	char **string_table = malloc(sizeof(char*) * compiler.strings.length);
+	
+	size_t idx = 0;
+	for(HashTableEntry *it = compiler.strings.head; it; it = it->next)
+	{
+		string_table[idx++] = it->key;
+	}
+	
+	VM *vm = vm_create();
+	vm->jmp = &jmp;
+	vm->ctx = program;
+	vm->func_lookup = vm_func_lookup;
+	vm->string_table = string_table;
+
+	register_c_functions(vm);
+
+	CompiledFunction *cf = get_function(get_file(argv[1]), "main");
+	if(cf)
+	{
+		// dump_instructions(&compiler, cf->instructions);
+
+		vm_call_function(vm, argv[1], "main", 0);
+		vm_run(vm);
+	}
+	else
+	{
+		printf("can't find %s::%s\n", argv[1], "main");
+	}
+
+	// dump_program(program);
+	// interp.program = program;
+
+	// call_function(&interp, "maps/moscow", "main", 0);
+	printf("%f MB", get_memory_usage_kb() / 1000.f);
 	#else
 	char line[16384];
 	while(fgets(line, sizeof(line), stdin))

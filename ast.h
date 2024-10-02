@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <core/ds/hash_table.h>
 
 typedef struct ASTNode ASTNode;
 typedef ASTNode* ASTNodePtr;
@@ -49,4 +50,19 @@ struct ASTNode
 	};
 	uint32_t type;
 	struct ASTNode *next;
+};
+
+typedef struct ASTFile ASTFile;
+struct ASTFile
+{
+	HashTable functions; // ASTFunction
+	bool parsed;
+	char path[256];
+};
+
+typedef struct ASTProgram ASTProgram;
+struct ASTProgram
+{
+	HashTable files; // ASTFile
+	char base_path[256];
 };
