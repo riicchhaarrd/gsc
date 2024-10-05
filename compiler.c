@@ -4,6 +4,19 @@
 #include <core/ds/hash_table.h>
 #include "compiler.h"
 
+static Node *node(Compiler *c, Node **list)
+{
+	Node *n = new(&c->arena, Node, 1);
+	n->next = *list; // Prepending, so it's actually previous
+	*list = n;
+	return n;
+}
+
+static Scope *current_scope(Compiler *c)
+{
+	return &c->scopes[c->current_scope];
+}
+
 static void error(Compiler *c, const char *fmt, ...)
 {
 	char message[2048];
@@ -11,7 +24,8 @@ static void error(Compiler *c, const char *fmt, ...)
 	va_start(va, fmt);
 	vsnprintf(message, sizeof(message), fmt, va);
 	va_end(va);
-	printf("[COMPILER] ERROR: %s", message);
+	printf("[COMPILER] ERROR: %s\n", message);
+	abort();
 	if(c->jmp)
 		longjmp(*c->jmp, 1);
 }
@@ -45,36 +59,36 @@ static Operand number(float f)
 
 static Operand NONE = { .type = OPERAND_TYPE_NONE };
 
-static Instruction *emit(Compiler *c, Opcode op)
+static size_t emit(Compiler *c, Opcode op)
 {
 	Instruction instr = { .opcode = op, .offset = buf_size(c->instructions) };
 	buf_push(c->instructions, instr);
-	return &c->instructions[buf_size(c->instructions) - 1];
+	return buf_size(c->instructions) - 1;
 }
 
-static Instruction *emit1(Compiler *c, Opcode opcode, Operand operand1)
+static size_t emit1(Compiler *c, Opcode opcode, Operand operand1)
 {
-	Instruction *instr = emit(c, opcode);
-	instr->operands[0] = operand1;
-	return instr;
+	size_t idx = emit(c, opcode);
+	c->instructions[idx].operands[0] = operand1;
+	return idx;
 }
 
-static Instruction *emit2(Compiler *c, Opcode opcode, Operand operand1, Operand operand2)
+static size_t emit2(Compiler *c, Opcode opcode, Operand operand1, Operand operand2)
 {
-	Instruction *instr = emit(c, opcode);
-	instr->operands[0] = operand1;
-	instr->operands[1] = operand2;
-	return instr;
+	size_t idx = emit(c, opcode);
+	c->instructions[idx].operands[0] = operand1;
+	c->instructions[idx].operands[1] = operand2;
+	return idx;
 }
 
-static Instruction *emit4(Compiler *c, Opcode opcode, Operand operand1, Operand operand2, Operand operand3, Operand operand4)
+static size_t emit4(Compiler *c, Opcode opcode, Operand operand1, Operand operand2, Operand operand3, Operand operand4)
 {
-	Instruction *instr = emit(c, opcode);
-	instr->operands[0] = operand1;
-	instr->operands[1] = operand2;
-	instr->operands[2] = operand3;
-	instr->operands[3] = operand4;
-	return instr;
+	size_t idx = emit(c, opcode);
+	c->instructions[idx].operands[0] = operand1;
+	c->instructions[idx].operands[1] = operand2;
+	c->instructions[idx].operands[2] = operand3;
+	c->instructions[idx].operands[3] = operand4;
+	return idx;
 }
 
 static void callee(Compiler *c, ASTNode *n)
@@ -143,10 +157,6 @@ static void visit_ASTArrayExpr_(Compiler *c, ASTArrayExpr *n)
 	// 	  "ASTArrayExpr"
 	// 	  " unimplemented");
 }
-static void visit_ASTGroupExpr_(Compiler *c, ASTGroupExpr *n)
-{
-	// error(c, "TODO");
-}
 static void visit_ASTConditionalExpr_(Compiler *c, ASTConditionalExpr *n)
 {
 	error(c,
@@ -159,10 +169,6 @@ static void visit_ASTFileReference_(Compiler *c, ASTFileReference *n)
 		  "ASTFileReference"
 		  " unimplemented");
 }
-static void visit_ASTMemberExpr_(Compiler *c, ASTMemberExpr *n)
-{
-	// error(c, "TODO");
-}
 static void visit_ASTVectorExpr_(Compiler *c, ASTVectorExpr *n)
 {
 	// error(c,
@@ -171,15 +177,19 @@ static void visit_ASTVectorExpr_(Compiler *c, ASTVectorExpr *n)
 }
 static void visit_ASTBreakStmt_(Compiler *c, ASTBreakStmt *n)
 {
-	error(c,
-		  "ASTBreakStmt"
-		  " unimplemented");
+	Scope *scope = current_scope(c);
+	Node *break_entry = node(c, &scope->break_list);
+	size_t *jmp = new(&c->arena, size_t, 1);
+	*jmp = emit(c, OP_JMP);
+	break_entry->data = jmp;
 }
 static void visit_ASTContinueStmt_(Compiler *c, ASTContinueStmt *n)
 {
-	error(c,
-		  "ASTContinueStmt"
-		  " unimplemented");
+	Scope *scope = current_scope(c);
+	Node *continue_entry = node(c, &scope->continue_list);
+	size_t *jmp = new(&c->arena, size_t, 1);
+	*jmp = emit(c, OP_JMP);
+	continue_entry->data = jmp;
 }
 static void visit_ASTDoWhileStmt_(Compiler *c, ASTDoWhileStmt *n)
 {
@@ -192,10 +202,6 @@ static void visit_ASTEmptyStmt_(Compiler *c, ASTEmptyStmt *n)
 	error(c,
 		  "ASTEmptyStmt"
 		  " unimplemented");
-}
-static void visit_ASTForStmt_(Compiler *c, ASTForStmt *n)
-{
-	// error(c, "TODO");
 }
 static void visit_ASTReturnStmt_(Compiler *c, ASTReturnStmt *n)
 {
@@ -240,7 +246,8 @@ IMPL_VISIT(ASTLiteral)
 	// 	"STRING", "INTEGER", "BOOLEAN", "FLOAT", "VECTOR", "ANIMATION", "FUNCTION", "LOCALIZED_STRING", "UNDEFINED"
 	// };
 
-	Instruction *instr = emit(c, OP_PUSH);
+	size_t instr_idx = emit(c, OP_PUSH);
+	Instruction *instr = &c->instructions[instr_idx];
 	instr->operands[0] = integer(n->type);
 	switch(n->type)
 	{
@@ -299,32 +306,39 @@ static int ip(Compiler *c)
 	return buf_size(c->instructions);
 }
 
+static size_t reljmp_(Compiler *c, Opcode opcode, int current, int destination)
+{
+	return emit1(c, opcode, integer(destination - current - 1));
+}
+
+static size_t reljmp_current(Compiler *c, Opcode opcode, int destination)
+{
+	return reljmp_(c, opcode, ip(c), destination);
+}
+
+static void patch_reljmp(Compiler *c, size_t ins)
+{
+	int destination = ip(c);
+	int current = c->instructions[ins].offset;
+	c->instructions[ins].operands[0] = integer(destination - current - 1);
+}
+
 IMPL_VISIT(ASTIfStmt)
 {
 	visit(n->test);
 	emit(c, OP_TEST);
-	Instruction *jz = emit(c, OP_JZ);
+	size_t jz = emit(c, OP_JZ);
 	visit(n->consequent);
-	Instruction *jmp = NULL;
-	if(n->alternative)
+	if (n->alternative)
 	{
-		emit(c, OP_CONST_0);
-		jmp = emit(c, OP_JMP);
-	}
-	
-	jz->operands[0] = integer(ip(c) - jz->offset);
-
-	if(n->alternative)
-	{
-		emit(c, OP_CONST_1);
-		if(jmp)
-		{
-			jmp->operands[0] = integer(ip(c) - jmp->offset);
-		}
-		emit(c, OP_TEST);
-		Instruction *jz2 = emit(c, OP_JZ);
+		size_t jmp = emit(c, OP_JMP);
+		patch_reljmp(c, jz);
 		visit(n->alternative);
-		jz2->operands[0] = integer(ip(c) - jz2->offset);
+		patch_reljmp(c, jmp);
+	}
+	else
+	{
+		patch_reljmp(c, jz);
 	}
 }
 
@@ -380,15 +394,31 @@ static void lvalue(Compiler *c, ASTNode *n)
 {
 	switch(n->type)
 	{
+		// TODO: handle level, self, game[""] ...
 		case AST_IDENTIFIER:
 		{
-			HashTableEntry *entry = hash_table_find(&c->variables, n->ast_identifier_data.name);
-			if(!entry)
+			if(!strcmp(n->ast_identifier_data.name, "level"))
 			{
-				entry = hash_table_insert(&c->variables, n->ast_identifier_data.name);
-				entry->integer = c->variable_index++;
+				emit(c, OP_LEVEL);
 			}
-			emit4(c, OP_REF, integer(entry->integer), NONE, NONE, NONE);
+			else if(!strcmp(n->ast_identifier_data.name, "self"))
+			{
+				emit(c, OP_SELF);
+			}
+			else if(!strcmp(n->ast_identifier_data.name, "game"))
+			{
+				emit(c, OP_GAME);
+			}
+			else
+			{
+				HashTableEntry *entry = hash_table_find(&c->variables, n->ast_identifier_data.name);
+				if(!entry)
+				{
+					entry = hash_table_insert(&c->variables, n->ast_identifier_data.name);
+					entry->integer = c->variable_index++;
+				}
+				emit4(c, OP_REF, integer(entry->integer), NONE, NONE, NONE);
+			}
 		}
 		break;
 		case AST_MEMBER_EXPR:
@@ -407,19 +437,161 @@ static void lvalue(Compiler *c, ASTNode *n)
 	}
 }
 
+static void increment_scope(Compiler *c)
+{
+	if(c->current_scope >= COMPILER_MAX_SCOPES)
+	{
+		error(c, "Max scope reached");
+	}
+	c->current_scope++;
+	Scope *scope = current_scope(c);
+	scope->arena = c->arena;
+	scope->break_list = NULL;
+	scope->continue_list = NULL;
+}
+
+static void decrement_scope(Compiler *c, int continue_offset, int break_offset)
+{
+	Scope *scope = current_scope(c);
+
+	// Patch all breaks and continue statement jumps
+
+	LIST_FOREACH(Node, scope->break_list, it)
+	{
+		size_t *offset = it->data;
+		Instruction *ins = &c->instructions[*offset];
+
+		ins->operands[0] = integer(break_offset - *offset - 1);
+	}
+
+	LIST_FOREACH(Node, scope->continue_list, it)
+	{
+		size_t *offset = it->data;
+		Instruction *ins = &c->instructions[*offset];
+
+		ins->operands[0] = integer(continue_offset - *offset - 1);
+	}
+
+	if(c->current_scope-- <= 0)
+	{
+		error(c, "Scope error");
+	}
+}
+
+IMPL_VISIT(ASTForStmt)
+{
+	if(n->init)
+	{
+		visit(n->init);
+		emit(c, OP_POP);
+	}
+	increment_scope(c);
+	int loop_begin = ip(c);
+	if(n->test)
+	{
+		visit(n->test);
+	}
+	else
+	{
+		emit(c, OP_CONST_1);
+	}
+	
+	emit(c, OP_TEST);
+	size_t jz = emit(c, OP_JZ);
+
+	visit(n->body);
+
+	int continue_offset = ip(c);
+	if(n->update)
+	{
+		visit(n->update);
+		emit(c, OP_POP);
+	}
+
+	reljmp_current(c, OP_JMP, loop_begin);
+	patch_reljmp(c, jz);
+	int break_offset = ip(c);
+
+	decrement_scope(c, continue_offset, break_offset);
+}
+IMPL_VISIT(ASTGroupExpr)
+{
+	visit(n->expression);
+}
 IMPL_VISIT(ASTUnaryExpr)
 {
-	// error(c, "TODO");
+	switch (n->op)
+	{
+		case '-':
+		{
+			visit(n->argument);
+			emit(c, OP_CONST_0);
+			emit4(c, OP_BINOP, integer(n->op), NONE, NONE, NONE);
+		}
+		break;
+		case '!':
+		case '~':
+		{
+			visit(n->argument);
+			emit4(c, OP_UNARY, integer(n->op), NONE, NONE, NONE);
+		}
+		break;
+		case TK_INCREMENT:
+		case TK_DECREMENT:
+		{
+			if(n->prefix)
+			{
+				error(c, "Unsupported prefix operator -- or ++");
+			}
+			visit(n->argument);
+			emit(c, OP_CONST_1);
+			if(n->op == TK_INCREMENT)
+			{
+				emit4(c, OP_BINOP, integer('+'), NONE, NONE, NONE);
+			}
+			else
+			{
+				emit4(c, OP_BINOP, integer('-'), NONE, NONE, NONE);
+			}
+			
+			lvalue(c, n->argument);
+			emit(c, OP_STORE);
+			// visit(n->argument);
+		}
+		break;
+		default: error(c, "Unsupported operator %d for unary expression", n->op); break;
+	}
+}
+IMPL_VISIT(ASTMemberExpr)
+{
+	visit(n->object);
+	property(c, n->prop);
+	emit(c, OP_LOAD_FIELD);
 }
 IMPL_VISIT(ASTIdentifier)
 {
-	// HashTableEntry *entry = hash_table_find(&c->variables, n->name);
-	// if(!entry)
-	// {
-	// 	error(c, "No variable '%s'", n->name);
-	// }
-	// emit4(c, OP_LOAD, integer(entry->integer), NONE, NONE, NONE);
-	emit4(c, OP_LOAD, string(c, n->name), NONE, NONE, NONE);
+	if(!strcmp(n->name, "level"))
+	{
+		emit(c, OP_LEVEL);
+	}
+	else if(!strcmp(n->name, "self"))
+	{
+		emit(c, OP_SELF);
+	}
+	else if(!strcmp(n->name, "game"))
+	{
+		emit(c, OP_GAME);
+	}
+	else
+	{
+		HashTableEntry *entry = hash_table_find(&c->variables, n->name);
+		if(!entry)
+		{
+			error(c, "No variable '%s'", n->name);
+		}
+		emit4(c, OP_LOAD, integer(entry->integer), NONE, NONE, NONE);
+	}
+	// emit4(c, OP_LOAD, string(c, n->name), NONE, NONE, NONE);
 }
 IMPL_VISIT(ASTAssignmentExpr)
 {
@@ -428,6 +600,7 @@ IMPL_VISIT(ASTAssignmentExpr)
 		visit(n->rhs);
 		lvalue(c, n->lhs);
 		emit(c, OP_STORE);
+		// visit(n->lhs);
 	}
 	else
 	{
@@ -437,7 +610,7 @@ IMPL_VISIT(ASTAssignmentExpr)
 		emit4(c, OP_BINOP, integer(n->op), NONE, NONE, NONE);
 		lvalue(c, n->lhs);
 		emit(c, OP_STORE);
-		visit(n->lhs);
+		// visit(n->lhs);
 	}
 }
 IMPL_VISIT(ASTBinaryExpr)
@@ -476,7 +649,7 @@ IMPL_VISIT(ASTFunction)
 	visit(n->body);
 }
 
-void compiler_init(Compiler *c, jmp_buf *jmp)
+void compiler_init(Compiler *c, jmp_buf *jmp, Arena arena)
 {
 	// c->out = fopen("compiled.gasm", "w");
 	c->variable_index = 0;
@@ -484,6 +657,7 @@ void compiler_init(Compiler *c, jmp_buf *jmp)
 	
 	c->string_index = 0;
 	hash_table_init(&c->strings, 16);
+	c->arena = arena;
 
 	c->jmp = jmp;
 }

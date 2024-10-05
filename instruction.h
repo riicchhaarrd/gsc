@@ -3,26 +3,40 @@
 #include <stdint.h>
 
 #define OPCODES(X) \
-	X(PUSH)       \
-	X(POP)        \
-	X(NOP)        \
-	X(LOAD)       \
-	X(STORE)      \
-	X(REF) X(LOAD_FIELD) X(FIELD_REF) X(BINOP) X(RET) X(CALL) X(TEST) X(JMP) X(JZ) X(JNZ) X(CONST_0) X(CONST_1) X(WAIT)
+	X(PUSH)        \
+	X(POP)         \
+	X(NOP)         \
+	X(LOAD)        \
+	X(STORE)       \
+	X(REF)         \
+	X(LOAD_FIELD)  \
+	X(FIELD_REF)   \
+	X(BINOP)       \
+	X(RET)         \
+	X(CALL)        \
+	X(TEST)        \
+	X(JMP)         \
+	X(JZ)          \
+	X(JNZ)         \
+	X(CONST_0)     \
+	X(CONST_1)     \
+	X(WAIT)        \
+	X(LEVEL)       \
+	X(SELF)        \
+	X(GAME)        \
+	X(UNARY)
 
 typedef enum
 {
 	OP_INVALID,
 #define OPCODE_ENUM(NAME) OP_##NAME,
-OPCODES(OPCODE_ENUM)
-	OP_MAX
+	OPCODES(OPCODE_ENUM) OP_MAX
 } Opcode;
 
 static const char *opcode_names[] = {
-"invalid",
+	"invalid",
 #define OPCODE_ENUM_STR(NAME) #NAME,
-OPCODES(OPCODE_ENUM_STR)
-NULL,
+	OPCODES(OPCODE_ENUM_STR) NULL,
 };
 
 // typedef enum

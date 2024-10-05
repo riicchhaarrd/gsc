@@ -691,29 +691,28 @@ Instruction *vm_func_lookup(void *ctx, const char *file, const char *function)
 	return compfunc->instructions;
 }
 
-static int cf_setexpfog(VM *vm)
-{
-	int argc = vm_checkinteger(vm, 0);
-	for(int i = 0; i < argc; ++i)
-	{
-		printf("%f\n", vm_checkfloat(vm, i + 1));
-	}
-	return 0;
-}
-static int cf_getcvar(VM *vm)
-{
-	const char *var = vm_checkstring(vm, 1);
-	printf("getcvar %s\n", var);
-	return 0;
-}
-static void register_c_functions(VM *vm)
-{
-	vm_register_c_function(vm, "setexpfog", cf_setexpfog);
-	vm_register_c_function(vm, "getcvar", cf_getcvar);
-}
-
 int main(int argc, char **argv)
 {
+	bool verbose = false;
+	char *input_file = NULL;
+	for(int i = 1; i < argc; i++)
+	{
+		if(!strcmp(argv[i], "-v"))
+		{
+			verbose = true;
+		}
+		else// if(i == argc - 1)
+		{
+			input_file = argv[i];
+		}
+	}
+
+	if(!input_file)
+	{
+		fprintf(stderr, "No input file provided.\n");
+		return -1;
+	}
+
 	hash_table_init(&compiled_files, 12);
 	
 	jmp_buf jmp;
@@ -726,7 +725,10 @@ int main(int argc, char **argv)
 	// interp.jmp = &jmp;
 	void ast_visitor_gsc_init(ASTVisitor *v);
 	Compiler compiler = { 0 };
-	compiler_init(&compiler, &jmp);
+	Arena arena;
+	static char arena_buf[8 * 1000 * 1000];
+	arena_init(&arena, arena_buf, sizeof(arena_buf));
+	compiler_init(&compiler, &jmp, arena);
 	assert(argc > 1);
 	#ifdef DISK
 	static const char *base_path = "scripts/";
@@ -735,7 +737,7 @@ int main(int argc, char **argv)
 	snprintf(program->base_path, sizeof(program->base_path), "%s", base_path);
 
 	hash_table_init(&program->files, 10);
-	ASTFile *file = parse_file(argv[1], program);
+	ASTFile *file = parse_file(input_file, program);
 	// for(HashTableEntry *it = program->files.head; it; it = it->next)
 	// {
 	// 	ASTFile *f = it->value;
@@ -761,24 +763,28 @@ int main(int argc, char **argv)
 	}
 	
 	VM *vm = vm_create();
+	vm->flags = VM_FLAG_NONE;
+	if(verbose)
+		vm->flags |= VM_FLAG_VERBOSE;
 	vm->jmp = &jmp;
 	vm->ctx = program;
 	vm->func_lookup = vm_func_lookup;
 	vm->string_table = string_table;
 
+	void register_c_functions(VM *vm);
 	register_c_functions(vm);
 
-	CompiledFunction *cf = get_function(get_file(argv[1]), "main");
+	CompiledFunction *cf = get_function(get_file(input_file), "main");
 	if(cf)
 	{
 		// dump_instructions(&compiler, cf->instructions);
 
-		vm_call_function(vm, argv[1], "main", 0);
+		vm_call_function(vm, input_file, "main", 0);
 		vm_run(vm);
 	}
 	else
 	{
-		printf("can't find %s::%s\n", argv[1], "main");
+		printf("can't find %s::%s\n", input_file, "main");
 	}
 
 	// dump_program(program);
