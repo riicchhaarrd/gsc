@@ -40,6 +40,10 @@ static void visit_(ASTNode *n, void *ctx)
 
 DEFINE_VISITOR(ASTFunction)
 {
+    for(ASTNode *it = n->parameters; it; it = it->next)
+    {
+        visit(it);
+    }
     visit(n->body);
 }
 DEFINE_VISITOR_END()

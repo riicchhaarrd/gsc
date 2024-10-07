@@ -49,6 +49,7 @@ struct ASTNode
 		AST_X_MACRO(AST_FIELD_DATA)
 	};
 	uint32_t type;
+	size_t offset;
 	struct ASTNode *next;
 };
 
@@ -65,4 +66,5 @@ struct ASTProgram
 {
 	HashTable files; // ASTFile
 	char base_path[256];
+	const char *source;
 };

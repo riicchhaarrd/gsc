@@ -25,6 +25,8 @@ struct Function
 	public:
 	char name[256];
 	ASTNodePtr body;
+	ASTNodePtr parameters;
+	int parameter_count;
 };
 
 struct FunctionPointerExpr

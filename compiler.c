@@ -17,6 +17,30 @@ static Scope *current_scope(Compiler *c)
 	return &c->scopes[c->current_scope];
 }
 
+static int lineno(Compiler *c)
+{
+	if(!c->source || !c->node)
+		return -1;
+	size_t n = 1;
+	for(size_t i = 0; i < c->node->offset && c->source[i]; ++i)
+	{
+		if(c->source[i] == '\n')
+			++n;
+	}
+	return n;
+}
+
+// TODO: FIXME
+// Scans for newlines for almost every Node now
+// cache it and return more accurate line info
+// with more debug info I guess
+
+static void debug_info_node(Compiler *c, ASTNode *n)
+{
+	c->node = n;
+	c->line_number = lineno(c);
+}
+
 static void error(Compiler *c, const char *fmt, ...)
 {
 	char message[2048];
@@ -24,8 +48,8 @@ static void error(Compiler *c, const char *fmt, ...)
 	va_start(va, fmt);
 	vsnprintf(message, sizeof(message), fmt, va);
 	va_end(va);
-	printf("[COMPILER] ERROR: %s\n", message);
-	abort();
+	printf("[COMPILER] ERROR: %s at line %d\n", message, lineno(c));
+	// abort();
 	if(c->jmp)
 		longjmp(*c->jmp, 1);
 }
@@ -61,7 +85,7 @@ static Operand NONE = { .type = OPERAND_TYPE_NONE };
 
 static size_t emit(Compiler *c, Opcode op)
 {
-	Instruction instr = { .opcode = op, .offset = buf_size(c->instructions) };
+	Instruction instr = { .opcode = op, .offset = buf_size(c->instructions), .line = c->line_number };
 	buf_push(c->instructions, instr);
 	return buf_size(c->instructions) - 1;
 }
@@ -91,38 +115,67 @@ static size_t emit4(Compiler *c, Opcode opcode, Operand operand1, Operand operan
 	return idx;
 }
 
-static void callee(Compiler *c, ASTNode *n)
+// Program counter
+static int ip(Compiler *c)
 {
-	switch(n->type)
-	{
-		case AST_IDENTIFIER:
-		{
-			emit4(c, OP_CALL, string(c, n->ast_identifier_data.name), NONE, NONE, NONE);
-		}
-		break;
-		case AST_LITERAL:
-		{
-			ASTLiteral *lit = &n->ast_literal_data;
-			if(lit->type != AST_LITERAL_TYPE_FUNCTION)
-				error(c, "Not a function");
-			if(lit->value.function.file->type != AST_FILE_REFERENCE)
-				error(c, "Not a file reference");
-			if(lit->value.function.function->type != AST_IDENTIFIER)
-				error(c, "Not a identifier");
-			emit4(c,
-				  OP_CALL,
-				  string(c, lit->value.function.function->ast_identifier_data.name),
-				  string(c, lit->value.function.file->ast_file_reference_data.file),
-				  NONE,
-				  NONE);
-		}
-		break;
+	return buf_size(c->instructions);
+}
 
-		default:
-		{
-			error(c, "Unsupported callee %s", ast_node_names[n->type]);
-		}
-		break;
+static size_t reljmp_(Compiler *c, Opcode opcode, int current, int destination)
+{
+	return emit1(c, opcode, integer(destination - current - 1));
+}
+
+static size_t reljmp_current(Compiler *c, Opcode opcode, int destination)
+{
+	return reljmp_(c, opcode, ip(c), destination);
+}
+
+static void patch_reljmp(Compiler *c, size_t ins)
+{
+	int destination = ip(c);
+	int current = c->instructions[ins].offset;
+	c->instructions[ins].operands[0] = integer(destination - current - 1);
+}
+
+static void increment_scope(Compiler *c)
+{
+	if(c->current_scope >= COMPILER_MAX_SCOPES)
+	{
+		error(c, "Max scope reached");
+	}
+	c->current_scope++;
+	Scope *scope = current_scope(c);
+	scope->arena = c->arena;
+	scope->break_list = NULL;
+	scope->continue_list = NULL;
+}
+
+static void decrement_scope(Compiler *c, int continue_offset, int break_offset)
+{
+	Scope *scope = current_scope(c);
+
+	// Patch all breaks and continue statement jumps
+
+	LIST_FOREACH(Node, scope->break_list, it)
+	{
+		size_t *offset = it->data;
+		Instruction *ins = &c->instructions[*offset];
+
+		ins->operands[0] = integer(break_offset - *offset - 1);
+	}
+
+	LIST_FOREACH(Node, scope->continue_list, it)
+	{
+		size_t *offset = it->data;
+		Instruction *ins = &c->instructions[*offset];
+
+		ins->operands[0] = integer(continue_offset - *offset - 1);
+	}
+
+	if(c->current_scope-- <= 0)
+	{
+		error(c, "Scope error");
 	}
 }
 
@@ -145,18 +198,47 @@ static void visit_(Compiler* c, ASTNode *n)
 }
 #define visit(x) visit_(c, x)
 
-static void visit_ASTFunctionPointerExpr_(Compiler *c, ASTFunctionPointerExpr *n)
+static void callee(Compiler *c, ASTNode *n, int call_flags, int numarguments)
 {
-	error(c,
-		  "ASTFunctionPointerExpr"
-		  " unimplemented");
+	switch(n->type)
+	{
+		case AST_IDENTIFIER:
+		{
+			emit4(c, OP_CALL, string(c, n->ast_identifier_data.name), NONE, integer(numarguments), integer(call_flags));
+		}
+		break;
+		case AST_FUNCTION_POINTER_EXPR:
+		{
+			visit(n->ast_function_pointer_expr_data.expression);
+			emit4(c, OP_CALL_PTR, NONE, NONE, integer(numarguments), integer(call_flags));
+		}
+		break;
+		case AST_LITERAL:
+		{
+			ASTLiteral *lit = &n->ast_literal_data;
+			if(lit->type != AST_LITERAL_TYPE_FUNCTION)
+				error(c, "Not a function");
+			if(lit->value.function.file->type != AST_FILE_REFERENCE)
+				error(c, "Not a file reference");
+			if(lit->value.function.function->type != AST_IDENTIFIER)
+				error(c, "Not a identifier");
+			emit4(c,
+				  OP_CALL,
+				  string(c, lit->value.function.function->ast_identifier_data.name),
+				  string(c, lit->value.function.file->ast_file_reference_data.file),
+				  integer(numarguments),
+				  integer(call_flags));
+		}
+		break;
+
+		default:
+		{
+			error(c, "Unsupported callee %s", ast_node_names[n->type]);
+		}
+		break;
+	}
 }
-static void visit_ASTArrayExpr_(Compiler *c, ASTArrayExpr *n)
-{
-	// error(c,
-	// 	  "ASTArrayExpr"
-	// 	  " unimplemented");
-}
+
 static void visit_ASTConditionalExpr_(Compiler *c, ASTConditionalExpr *n)
 {
 	error(c,
@@ -197,18 +279,6 @@ static void visit_ASTDoWhileStmt_(Compiler *c, ASTDoWhileStmt *n)
 		  "ASTDoWhileStmt"
 		  " unimplemented");
 }
-static void visit_ASTEmptyStmt_(Compiler *c, ASTEmptyStmt *n)
-{
-	error(c,
-		  "ASTEmptyStmt"
-		  " unimplemented");
-}
-static void visit_ASTReturnStmt_(Compiler *c, ASTReturnStmt *n)
-{
-	// error(c,
-	// 	  "ASTReturnStmt"
-	// 	  " unimplemented");
-}
 static void visit_ASTSwitchCase_(Compiler *c, ASTSwitchCase *n)
 {
 	error(c,
@@ -221,22 +291,70 @@ static void visit_ASTSwitchStmt_(Compiler *c, ASTSwitchStmt *n)
 	// 	  "ASTSwitchStmt"
 	// 	  " unimplemented");
 }
-static void visit_ASTWaitStmt_(Compiler *c, ASTWaitStmt *n)
-{
-	visit(n->duration);
-	emit(c, OP_WAIT);
-}
 static void visit_ASTWaitTillFrameEndStmt_(Compiler *c, ASTWaitTillFrameEndStmt *n)
 {
 	error(c,
 		  "ASTWaitTillFrameEndStmt"
 		  " unimplemented");
 }
-static void visit_ASTWhileStmt_(Compiler *c, ASTWhileStmt *n)
+
+IMPL_VISIT(ASTFunctionPointerExpr)
 {
-	// error(c,
-	// 	  "ASTWhileStmt"
-	// 	  " unimplemented");
+	error(c, "Must be used within calling context");
+}
+
+IMPL_VISIT(ASTWaitStmt)
+{
+	visit(n->duration);
+	emit(c, OP_WAIT);
+}
+
+IMPL_VISIT(ASTArrayExpr)
+{
+	emit(c, OP_TABLE);
+}
+
+IMPL_VISIT(ASTEmptyStmt)
+{
+}
+
+IMPL_VISIT(ASTReturnStmt)
+{
+	if(n->argument)
+	{
+		visit(n->argument);
+	} else
+	{
+		emit(c, OP_UNDEF);
+	}
+	emit(c, OP_RET);
+}
+
+IMPL_VISIT(ASTWhileStmt)
+{
+	increment_scope(c);
+	int loop_begin = ip(c);
+	if(n->test)
+	{
+		visit(n->test);
+	}
+	else
+	{
+		emit(c, OP_CONST_1);
+	}
+	
+	emit(c, OP_TEST);
+	size_t jz = emit(c, OP_JZ);
+
+	visit(n->body);
+
+	int continue_offset = ip(c);
+
+	reljmp_current(c, OP_JMP, loop_begin);
+	patch_reljmp(c, jz);
+	int break_offset = ip(c);
+
+	decrement_scope(c, continue_offset, break_offset);
 }
 
 IMPL_VISIT(ASTLiteral)
@@ -298,29 +416,6 @@ IMPL_VISIT(ASTLiteral)
 		}
 		break;
 	}
-}
-
-// Program counter
-static int ip(Compiler *c)
-{
-	return buf_size(c->instructions);
-}
-
-static size_t reljmp_(Compiler *c, Opcode opcode, int current, int destination)
-{
-	return emit1(c, opcode, integer(destination - current - 1));
-}
-
-static size_t reljmp_current(Compiler *c, Opcode opcode, int destination)
-{
-	return reljmp_(c, opcode, ip(c), destination);
-}
-
-static void patch_reljmp(Compiler *c, size_t ins)
-{
-	int destination = ip(c);
-	int current = c->instructions[ins].offset;
-	c->instructions[ins].operands[0] = integer(destination - current - 1);
 }
 
 IMPL_VISIT(ASTIfStmt)
@@ -434,47 +529,6 @@ static void lvalue(Compiler *c, ASTNode *n)
 			error(c, "Invalid lvalue for %s", ast_node_names[n->type]);
 		}
 		break;
-	}
-}
-
-static void increment_scope(Compiler *c)
-{
-	if(c->current_scope >= COMPILER_MAX_SCOPES)
-	{
-		error(c, "Max scope reached");
-	}
-	c->current_scope++;
-	Scope *scope = current_scope(c);
-	scope->arena = c->arena;
-	scope->break_list = NULL;
-	scope->continue_list = NULL;
-}
-
-static void decrement_scope(Compiler *c, int continue_offset, int break_offset)
-{
-	Scope *scope = current_scope(c);
-
-	// Patch all breaks and continue statement jumps
-
-	LIST_FOREACH(Node, scope->break_list, it)
-	{
-		size_t *offset = it->data;
-		Instruction *ins = &c->instructions[*offset];
-
-		ins->operands[0] = integer(break_offset - *offset - 1);
-	}
-
-	LIST_FOREACH(Node, scope->continue_list, it)
-	{
-		size_t *offset = it->data;
-		Instruction *ins = &c->instructions[*offset];
-
-		ins->operands[0] = integer(continue_offset - *offset - 1);
-	}
-
-	if(c->current_scope-- <= 0)
-	{
-		error(c, "Scope error");
 	}
 }
 
@@ -619,17 +673,42 @@ IMPL_VISIT(ASTBinaryExpr)
 	visit(n->lhs);
 	emit4(c, OP_BINOP, integer(n->op), NONE, NONE, NONE);
 }
+
 IMPL_VISIT(ASTCallExpr)
 {
+	bool pass_args_as_ref = false;
+	if(n->callee->type == AST_IDENTIFIER)
+	{
+		if(!strcmp(n->callee->ast_identifier_data.name, "waittill"))
+		{
+			pass_args_as_ref = true;
+		}
+	}
 	for(size_t i = 0; i < n->numarguments; ++i)
 	{
-		visit(n->arguments[i]);
+		if(pass_args_as_ref && i > 0)
+		{
+			lvalue(c, n->arguments[n->numarguments - i - 1]);
+		} else
+		{
+			visit(n->arguments[n->numarguments - i - 1]);
+		}
 	}
+	int call_flags = 0;
+	if(n->threaded)
+		call_flags |= VM_CALL_FLAG_THREADED;
+	if(n->object)
+		call_flags |= VM_CALL_FLAG_METHOD;
 	emit2(c, OP_PUSH, integer(AST_LITERAL_TYPE_INTEGER), integer(n->numarguments));
-	callee(c, n->callee);
+	if(n->object)
+	{
+		visit(n->object);
+	}
+	callee(c, n->callee, call_flags, n->numarguments);
 }
 IMPL_VISIT(ASTExprStmt)
 {
+	debug_info_node(c, n);
 	visit(n->expression);
 	emit(c, OP_POP);
 }
@@ -638,15 +717,10 @@ IMPL_VISIT(ASTBlockStmt)
 	ASTNode **it = &n->body;
 	while(*it)
 	{
+		// debug_info_node(c, *it);
 		visit(*it);
 		it = &((*it)->next);
 	}
-}
-IMPL_VISIT(ASTFunction)
-{
-	c->variable_index = 0;
-	hash_table_clear(&c->variables);
-	visit(n->body);
 }
 
 void compiler_init(Compiler *c, jmp_buf *jmp, Arena arena)
@@ -695,20 +769,50 @@ void dump_instructions(Compiler *c, Instruction *instructions)
 		print_instruction(c, instr);
 	}
 }
-
-Instruction *compile_function(Compiler *c, ASTFunction *func)
+IMPL_VISIT(ASTFunction)
 {
+	error(c, "Nested functions are not supported");
+}
+
+#include "vm.h"
+
+VMFunction *compile_function(Compiler *c, ASTFunction *n)
+{
+	VMFunction *vmf = malloc(sizeof(VMFunction));
+	jmp_buf *prev = c->jmp;
 	jmp_buf jmp;
 	if(setjmp(jmp))
 	{
 		buf_free(c->instructions);
-		c->instructions = NULL;
+		free(vmf);
+		if(prev)
+			longjmp(*prev, 1);
 		return NULL;
 	}
+	c->instructions = NULL;
 	c->jmp = &jmp;
+	c->variable_index = 0;
+	hash_table_clear(&c->variables);
+	vmf->parameter_count = n->parameter_count;
+	debug_info_node(c, n);
+	for(ASTNode *it = n->parameters; it; it = it->next)
+    {
+		if(it->type != AST_IDENTIFIER)
+			error(c, "Expected identifier");
+		HashTableEntry *entry = hash_table_find(&c->variables, it->ast_identifier_data.name);
+		if(entry)
+		{
+			error(c, "Parameter '%s' already defined", it->ast_identifier_data.name);
+		}
+		entry = hash_table_insert(&c->variables, it->ast_identifier_data.name);
+		entry->integer = c->variable_index++;
+    }
+	visit(n->body);
+	vmf->local_count = c->variable_index;
+	emit(c, OP_UNDEF);
+	emit(c, OP_RET);
+
+	vmf->instructions = c->instructions;
 	c->instructions = NULL;
-	visit(func->body);
-	Instruction *ins = c->instructions;
-	c->instructions = NULL;
-	return ins;
+	return vmf;
 }

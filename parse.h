@@ -13,17 +13,18 @@ typedef struct
 typedef struct ASTNode ASTNode;
 
 #define AST_INIT_NODE(UPPER, TYPE, LOWER)     \
-	static TYPE *init_##TYPE()                \
+	static TYPE *init_##TYPE(Parser *parser)  \
 	{                                         \
 		ASTNode *n = malloc(sizeof(ASTNode)); \
 		memset(n, 0, sizeof(ASTNode));        \
+		n->offset = parser->token.offset;     \
 		n->type = UPPER;                      \
 		return (TYPE *)n;                     \
 	}
 
 AST_X_MACRO(AST_INIT_NODE)
 
-#define NODE(TYPE, VAR) AST##TYPE *VAR = init_AST##TYPE()
+#define NODE(TYPE, VAR) AST##TYPE *VAR = init_AST##TYPE(parser)
 
 static void dump_token(Lexer *lexer, Token *t)
 {

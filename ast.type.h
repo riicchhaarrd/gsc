@@ -50,6 +50,8 @@ typedef struct
 {
 	char name[256];
 	ASTNodePtr body;
+	ASTNodePtr parameters;
+	int parameter_count;
 } ASTFunction;
 
 typedef struct
@@ -288,6 +290,14 @@ static size_t ASTFunction_visit(AstVisitor *visitor, const char *key, ASTFunctio
 	if(visitor->pre_visit(visitor, "body", 0xc6c93295, NULL, NULL, sizeof(inst->body)))
 	{
 		changed_count += visitor->visit_ASTNodePtr(visitor, "body", (ASTNodePtr*)&inst->body, 1, sizeof(inst->body));
+	}
+	if(visitor->pre_visit(visitor, "parameters", 0x3234cd99, NULL, NULL, sizeof(inst->parameters)))
+	{
+		changed_count += visitor->visit_ASTNodePtr(visitor, "parameters", (ASTNodePtr*)&inst->parameters, 1, sizeof(inst->parameters));
+	}
+	if(visitor->pre_visit(visitor, "parameter_count", 0xbe61e9fc, NULL, NULL, sizeof(inst->parameter_count)))
+	{
+		changed_count += visitor->visit_int(visitor, "parameter_count", (int*)&inst->parameter_count, 1, sizeof(inst->parameter_count));
 	}
 	return changed_count;
 }

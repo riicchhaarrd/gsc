@@ -17,6 +17,13 @@ static void info(VM *vm, const char *fmt, ...)
 
 static Variable undef = { .type = VAR_UNDEFINED, .refcount = 0xdeadbeef };
 
+static Object *create_object()
+{
+	Object *o = calloc(1, sizeof(Object));
+	hash_table_init(&o->fields, 10);
+	return o;
+}
+
 static void strtolower(char *str)
 {
 	for(char *p = str; *p; ++p)
@@ -45,35 +52,48 @@ static void vm_stacktrace(VM *vm)
 	#define COUNT_OF(x) (sizeof(x) / sizeof((x)[0]))
 #endif
 
-static const char *stringify(VM * vm, Variable * v, char *buf, size_t n);
+static void vm_error(VM *vm, const char *fmt, ...)
+{
+    Thread *thr = vm->thread;
+    StackFrame *sf = thr->frame;
+	Instruction *current = &sf->instructions[sf->ip - 1];
+	char message[2048];
+	va_list va;
+	va_start(va, fmt);
+	vsnprintf(message, sizeof(message), fmt, va);
+	va_end(va);
+	printf("[VM] ERROR: %s on line %d\n", message, current->line);
+	// abort();
+	vm_stacktrace(vm);
+	if(vm->jmp)
+		longjmp(*vm->jmp, 1);
+}
+
+static Variable *local(VM *vm, size_t index)
+{
+    Thread *thr = vm->thread;
+    StackFrame *sf = thr->frame;
+	if(index >= sf->local_count)
+	{
+		vm_error(vm, "Invalid local index");
+		return NULL;
+	}
+	return &sf->locals[index];
+}
+
 static void print_locals(VM *vm)
 {
     Thread *thr = vm->thread;
 	StackFrame *sf = thr->frame;
 	printf(" || Local variables ||\n");
 	char str[1024];
-	for(size_t i = 0; i < COUNT_OF(sf->locals); ++i)
+	for(size_t i = 0; i < sf->local_count; ++i)
 	{
-		Variable *lv = &sf->locals[i];
+		Variable *lv = local(vm, i);
 		if(lv->type == VAR_UNDEFINED)
 			continue;
-		stringify(vm, lv, str, sizeof(str));
-		printf("\t|| local %d (%s): %s\n", i, variable_type_names[lv->type], str);
+		printf("\t|| local %d (%s): %s\n", i, variable_type_names[lv->type], vm_stringify(vm, lv, str, sizeof(str)));
 	}
-}
-
-static void vm_error(VM *vm, const char *fmt, ...)
-{
-	char message[2048];
-	va_list va;
-	va_start(va, fmt);
-	vsnprintf(message, sizeof(message), fmt, va);
-	va_end(va);
-	printf("[VM] ERROR: %s\n", message);
-	// abort();
-	vm_stacktrace(vm);
-	if(vm->jmp)
-		longjmp(*vm->jmp, 1);
 }
 
 static const char *string(VM *vm, size_t idx)
@@ -110,6 +130,14 @@ static Variable *variable()
     return var;
 }
 
+Variable *vm_create_object()
+{
+	Variable *v = variable();
+	v->type = VAR_OBJECT;
+	v->u.oval = create_object();
+	return v;
+}
+
 static Variable *dup(Variable *v)
 {
 	Variable *copy = variable();
@@ -129,7 +157,6 @@ static void push(VM *vm, Variable *v)
 static Variable *pop(VM *vm)
 {
     Thread *thr = vm->thread;
-    StackFrame *sf = thr->frame;
     Variable *top = thr->stack[--thr->sp];
     // Variable ret = *top;
     // decref(vm, &top);
@@ -156,9 +183,15 @@ static void pop_string(VM *vm, char *str, size_t n)
     Thread *thr = vm->thread;
     StackFrame *sf = thr->frame;
     Variable *top = thr->stack[--thr->sp];
-    if(top->type != VAR_STRING)
-		vm_error(vm, "'%s' is not a string", variable_type_names[top->type]);
-	snprintf(str, n, "%s", top->u.sval);
+	switch(top->type)
+	{
+		// TODO: directly use a hash and memcmp for integer/other type of keys
+
+		case VAR_INTEGER: snprintf(str, n, "%d", top->u.ival); break;
+		case VAR_FLOAT: snprintf(str, n, "%f", top->u.fval); break;
+		case VAR_STRING: snprintf(str, n, "%s", top->u.sval); break;
+		default: vm_error(vm, "'%s' is not a string", variable_type_names[top->type]); break;
+	}
 	decref(vm, &top);
 }
 
@@ -290,7 +323,7 @@ static VariableType promote_type(VariableType lhs, VariableType rhs)
 	return lhs;
 }
 
-static const char *stringify(VM *vm, Variable *v, char *buf, size_t n)
+const char *vm_stringify(VM *vm, Variable *v, char *buf, size_t n)
 {
 	switch(v->type)
 	{
@@ -436,10 +469,10 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 		case VAR_STRING:
 		{
 			// TODO: FIXME
-			static char a[4096];
-			static char b[4096];
-			stringify(vm, lhs, a, sizeof(a));
-			stringify(vm, lhs, b, sizeof(b));
+			static char a_buf[4096];
+			static char b_buf[4096];
+			char *a = vm_stringify(vm, lhs, a_buf, sizeof(a_buf));
+			char *b = vm_stringify(vm, rhs, b_buf, sizeof(b_buf));
 			switch(op)
 			{
 				case TK_PLUS_ASSIGN:
@@ -478,7 +511,7 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 	return result;
 }
 
-void vm_call_function(VM *vm, const char *file, const char *function, size_t nargs);
+void vm_call_function(VM *vm, const char *file, const char *function, size_t nargs, Variable *self);
 #define ASSERT_STACK(X)                                                              \
 	do                                                                               \
 	{                                                                                \
@@ -509,6 +542,12 @@ static void vm_execute(VM *vm, Instruction *ins)
             int rel = read_int(vm, ins, 0);
 			sf->ip += rel;
 			ASSERT_STACK(0);
+		}
+		break;
+
+		case OP_UNDEF:
+		{
+			push(vm, dup(&undef));
 		}
 		break;
 
@@ -583,13 +622,24 @@ static void vm_execute(VM *vm, Instruction *ins)
 			{
 				vm_error(vm, "object is null");
 			}
-			HashTableEntry *entry = hash_table_find(&o->fields, prop);
-			if(!entry)
+			if(!strcmp(prop, "size"))
 			{
-				push(vm, &undef);
-			} else
+				Variable *v = variable();
+				v->type = VAR_INTEGER;
+				v->u.ival = o->fields.length;
+				push(vm, v);
+			}
+			else
 			{
-				push(vm, entry->value);
+				HashTableEntry *entry = hash_table_find(&o->fields, prop);
+				if(!entry)
+				{
+					push(vm, &undef);
+				}
+				else
+				{
+					push(vm, entry->value);
+				}
 			}
 			ASSERT_STACK(-1);
 		}
@@ -625,7 +675,7 @@ static void vm_execute(VM *vm, Instruction *ins)
 			// TODO: check out of bounds
 			// allocate dynamically
 			int slot = read_int(vm, ins, 0);
-			Variable *lv = &sf->locals[slot];
+			Variable *lv = local(vm, slot);
 			// lv->refcount = 0xdeadbeef;
 			push(vm, dup(lv));
 			ASSERT_STACK(1);
@@ -648,7 +698,7 @@ static void vm_execute(VM *vm, Instruction *ins)
 			// TODO: check out of bounds
 			// allocate dynamically
 			int slot = read_int(vm, ins, 0);
-			Variable *lv = &sf->locals[slot];
+			Variable *lv = local(vm, slot);
 			// lv->refcount = 0xdeadbeef;
 			push(vm, lv);
 			ASSERT_STACK(1);
@@ -678,6 +728,16 @@ static void vm_execute(VM *vm, Instruction *ins)
             Variable *v = variable();
 			switch(var_type)
 			{
+				case AST_LITERAL_TYPE_FUNCTION:
+				{
+					v->type = VAR_FUNCTION;
+					v->u.funval.function = read_string_index(vm, ins, 1);
+					if(check_operand(ins, 2, OPERAND_TYPE_INDEXED_STRING))
+						v->u.funval.file = read_string_index(vm, ins, 2);
+					else
+						v->u.funval.file = -1;
+				}
+				break;
 				case AST_LITERAL_TYPE_FLOAT:
 				{
 					v->type = VAR_FLOAT;
@@ -725,17 +785,67 @@ static void vm_execute(VM *vm, Instruction *ins)
 		}
 		break;
 		
-        case OP_CALL:
+		case OP_WAIT:
 		{
-            const char *function = read_string(vm, ins, 0);
-            const char *file = NULL;
-            if(check_operand(ins, 1, OPERAND_TYPE_INDEXED_STRING))
-                file = read_string(vm, ins, 1);
-            // int nargs = pop_int(vm);
+			Variable *v = pop(vm);
+			Variable duration = coerce_float(vm, v);
+			thr->wait += duration.u.fval;
+		}
+		break;
+
+		case OP_TABLE:
+		{
+			Variable *v = variable();
+			v->type = VAR_OBJECT;
+			v->u.oval = create_object();
+			push(vm, v);
+		}
+		break;
+
+		case OP_RET:
+		{
+			// Variable *retval = pop(vm);
+			if(thr->bp <= 0)
+			{
+				vm_error(vm, "bp <= 0");
+			}
+			thr->frame = &thr->frames[--thr->bp];
+			// StackFrame *sf = thr->frame;
+			// push(vm, retval);
+		}
+		break;
+
+		case OP_CALL_PTR:
+		case OP_CALL:
+		{
+			const char *function = NULL;
+			const char *file = NULL;
+			if(ins->opcode == OP_CALL_PTR)
+			{
+				Variable *func = pop(vm);
+				if(func->type != VAR_FUNCTION)
+				{
+					vm_error(vm, "'%s' is not a function pointer", variable_type_names[func->type]);
+				}
+				function = string(vm, func->u.funval.function);
+				if(func->u.funval.file != -1)
+					file = string(vm, func->u.funval.file);
+			} else
+			{
+				function = read_string(vm, ins, 0);
+				if(check_operand(ins, 1, OPERAND_TYPE_INDEXED_STRING))
+					file = read_string(vm, ins, 1);
+			}
+			int call_flags = read_int(vm, ins, 3);
+			Variable *self = NULL;
+			if(call_flags & VM_CALL_FLAG_METHOD)
+			{
+				self = pop(vm);
+			}
             int nargs = cast_int(vm, top(vm, 0));
             info(vm, "CALLING -> %s::%s %d\n", file, function, nargs);
-            vm_call_function(vm, file ? file : sf->file, function, nargs);
-			ASSERT_STACK(-nargs);
+            vm_call_function(vm, file ? file : sf->file, function, nargs, self);
+			// ASSERT_STACK(-nargs);
 		}
 		break;
 
@@ -761,15 +871,8 @@ static void vm_execute(VM *vm, Instruction *ins)
 	if(vm->flags & VM_FLAG_VERBOSE)
 	{
 		vm_stacktrace(vm);
-		getchar();
+		// getchar();
 	}
-}
-
-static Object *create_object()
-{
-	Object *o = calloc(1, sizeof(Object));
-	hash_table_init(&o->fields, 10);
-	return o;
 }
 
 VM *vm_create()
@@ -810,24 +913,39 @@ vm_CFunction vm_get_c_function(VM *vm, const char *name)
 	return entry->value;
 }
 
-void vm_run(VM *vm)
+bool vm_run(VM *vm, float dt)
 {
-    Thread *thr = vm->thread;
-    StackFrame *sf = thr->frame;
 	for(;;)
     {
-        if(sf->ip >= buf_size(sf->instructions))
-            vm_error(vm, "ip oob");
+		Thread *thr = vm->thread;
+		if(thr->wait > 0.f)
+		{
+			thr->wait -= dt;
+			return true;
+		}
+		thr->wait = 0.f;
+		StackFrame *sf = thr->frame;
+		if(sf->ip >= buf_size(sf->instructions))
+		{
+			// vm_error(vm, "ip oob");
+			return false;
+		}
 	    Instruction *current = &sf->instructions[sf->ip++];
 		vm_execute(vm, current);
+		if(current->opcode == OP_RET)
+		{
+			break;
+		}
     }
+	return true;
 }
 
-Variable *get_arg(VM *vm, size_t idx)
+Variable *vm_argv(VM *vm, size_t idx)
 {
 	Thread *thr = vm->thread;
 	int nargs = cast_int(vm, top(vm, 0));
-	return thr->stack[thr->sp - nargs - 1 + idx];
+	return thr->stack[thr->sp - 2 - idx];
+	// return thr->stack[thr->sp - nargs - 1 + idx];
 }
 
 size_t vm_argc(VM *vm)
@@ -839,7 +957,7 @@ const char *vm_checkstring(VM *vm, int idx)
 {
 	Thread *thr = vm->thread;
 	StackFrame *sf = thr->frame;
-	Variable *arg = get_arg(vm, idx);
+	Variable *arg = vm_argv(vm, idx);
 	switch(arg->type)
 	{
 		case VAR_STRING: return arg->u.sval;
@@ -850,6 +968,7 @@ const char *vm_checkstring(VM *vm, int idx)
 			return str;
 		}
 		break;
+		case VAR_UNDEFINED: return "undefined";
 		case VAR_INTEGER:
 		{
 			char *str = new(&vm->c_function_arena, char, 32);
@@ -866,7 +985,7 @@ float vm_checkfloat(VM *vm, int idx)
 {
 	Thread *thr = vm->thread;
 	StackFrame *sf = thr->frame;
-	Variable *arg = get_arg(vm, idx);
+	Variable *arg = vm_argv(vm, idx);
 	switch(arg->type)
 	{
 		case VAR_INTEGER: return (float)arg->u.ival;
@@ -880,7 +999,7 @@ int vm_checkinteger(VM *vm, int idx)
 {
 	Thread *thr = vm->thread;
 	StackFrame *sf = thr->frame;
-	Variable *arg = get_arg(vm, idx);
+	Variable *arg = vm_argv(vm, idx);
 	if(arg->type != VAR_INTEGER)
 		vm_error(vm, "Not a integer");
 	return arg->u.ival;
@@ -894,6 +1013,16 @@ void vm_pushstring(VM *vm, const char *str)
 	push(vm, v);
 }
 
+void vm_pushvar(VM *vm, Variable *v)
+{
+	push(vm, v);
+}
+
+Thread *vm_thread(VM *vm)
+{
+	return vm->thread;
+}
+
 void vm_pushinteger(VM *vm, int val)
 {
     Variable *v = variable();
@@ -902,53 +1031,82 @@ void vm_pushinteger(VM *vm, int val)
     push(vm, v);
 }
 
-void vm_call_function(VM *vm, const char *file, const char *function, size_t nargs)
+// TODO: make use of namespace
+static void vm_call_c_function(VM *vm, const char *namespace, const char *function, size_t nargs, Variable *self)
 {
-	Instruction *ins = vm->func_lookup(vm->ctx, file, function);
-    if(!ins)
+	vm->c_function_arena = vm->arena;
+
+	vm_CFunction cfunc = vm_get_c_function(vm, function);
+	if(!cfunc)
+	{
+		vm_error(vm, "No builtin function '%s'", function);
+	}
+	int nret = cfunc(vm);
+	if(nret == 0)
+	{
+		push(vm, dup(&undef));
+	}
+	Variable *ret = pop(vm);
+
+	// Pop all args
+	for(size_t i = 0; i < nargs + 1; ++i)
+	{
+		Variable *arg = pop(vm);
+		// decref(vm, &arg);
+	}
+
+	// Put ret back on stack
+	push(vm, ret);
+}
+
+void vm_call_function(VM *vm, const char *file, const char *function, size_t nargs, Variable *self)
+{
+	VMFunction *vmf = vm->func_lookup(vm->ctx, file, function);
+    if(!vmf)
     {
-		vm->c_function_arena = vm->arena;
-
-        vm_CFunction cfunc = vm_get_c_function(vm, function);
-        if(!cfunc)
-        {
-            vm_error(vm, "No builtin function '%s'", function);
-        }
-        int nret = cfunc(vm);
-        if(nret == 0)
-        {
-            push(vm, &undef);
-        }
-        Variable *ret = pop(vm);
-
-        // Pop all args
-        for(size_t i = 0; i < nargs + 1; ++i)
-        {
-			Variable *arg = pop(vm);
-			decref(vm, &arg);
-        }
-
-        // Put ret back on stack
-        push(vm, ret);
+		vm_call_c_function(vm, file, function, nargs, self);
         return;
 	}
     Thread *thr = vm->thread;
-    if(!thr)
-    {
-        thr = calloc(1, sizeof(Thread));
-        vm->thread = thr;        
-    }
+	Variable *prev_self = &vm->level;
+	if(thr->bp != 0)
+	{
+		prev_self = &thr->frames[thr->bp - 1].self;
+	}
 	thr->frame = &thr->frames[thr->bp++];
     StackFrame *sf = thr->frame;
-	memset(sf->locals, 0, sizeof(sf->locals));
+	sf->self = self ? *self : *prev_self;
+	sf->local_count = vmf->local_count;
+	sf->locals = new(&vm->arena, Variable, vmf->local_count);
 	for(size_t i = 0; i < COUNT_OF(sf->locals); ++i)
 	{
+		sf->locals[i].type = VAR_UNDEFINED;
+		sf->locals[i].u.ival = 0;
 		sf->locals[i].refcount = 0xdeadbeef;
+	}
+	pop(vm); //nargs
+	for(size_t i = 0; i < nargs; ++i)
+	{
+		Variable *arg = pop(vm);
+		// decref(vm, &arg);
+		if(i < vmf->parameter_count)
+		{
+			sf->locals[i] = *arg;
+			sf->locals[i].refcount = 0xdeadbeef;
+		}
 	}
 	sf->file = file;
     sf->function = function;
-    sf->instructions = ins;
-	for(size_t i = 0; i < buf_size(ins); ++i)
-		print_instruction(vm, &ins[i]);
+    sf->instructions = vmf->instructions;
+	for(size_t i = 0; i < buf_size(vmf->instructions); ++i)
+		print_instruction(vm, &vmf->instructions[i]);
 	getchar();
+}
+
+void vm_call_function_thread(VM *vm, const char *file, const char *function, size_t nargs, Variable *self)
+{
+    Thread *thr = calloc(1, sizeof(Thread));
+	// TODO: add to list of threads
+	vm->thread = thr;
+	vm_call_function(vm, file, function, nargs, self);
 }

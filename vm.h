@@ -16,7 +16,6 @@ void vm_pushinteger(VM*, int);
 float vm_checkfloat(VM *vm, int idx);
 const char *vm_checkstring(VM *vm, int idx);
 void vm_pushstring(VM *vm, const char *str);
-size_t vm_argc(VM *vm);
 
 typedef struct Variable Variable;
 typedef struct
@@ -31,6 +30,11 @@ typedef union
     char *sval;
     Object *oval;
     float vval[3];
+    struct
+    {
+        int file;
+        int function;
+    } funval;
 } VariableValue;
 
 struct Variable
@@ -45,9 +49,8 @@ struct Variable
 
 typedef struct
 {
-    // HashTable locals;
-    size_t local_index;
-    Variable locals[MAX_LOCAL_VARS];
+    Variable *locals;
+    size_t local_count;
     Instruction *instructions;
     const char *file, *function;
     int ip;
@@ -63,7 +66,16 @@ typedef struct
     StackFrame *frame;
     int sp, bp;
     int result;
+    float wait;
 } Thread;
+
+typedef struct VMFunction VMFunction;
+struct VMFunction
+{
+	Instruction *instructions;
+	size_t parameter_count;
+	size_t local_count;
+};
 
 #define VM_FLAG_NONE (0)
 #define VM_FLAG_VERBOSE (1)
@@ -82,10 +94,16 @@ struct VM
 	void *ctx;
     char **string_table;
     HashTable c_functions;
-	Instruction *(*func_lookup)(void *ctx, const char *file, const char *function);
+	VMFunction *(*func_lookup)(void *ctx, const char *file, const char *function);
 };
 
-void vm_call_function(VM *vm, const char *file, const char *function, size_t nargs);
-void vm_run(VM *vm);
+void vm_call_function_thread(VM *vm, const char *file, const char *function, size_t nargs, Variable *self);
+bool vm_run(VM *vm, float dt);
 VM *vm_create();
 void vm_register_c_function(VM *vm, const char *name, vm_CFunction callback);
+const char *vm_stringify(VM *vm, Variable *v, char *buf, size_t n);
+size_t vm_argc(VM *vm);
+Variable *vm_argv(VM *vm, size_t idx);
+Variable *vm_create_object();
+void vm_pushvar(VM *vm, Variable*);
+Thread *vm_thread(VM*);

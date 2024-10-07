@@ -442,11 +442,18 @@ static void parse(Parser *parser, ASTProgram *prog, ASTFile *file)
 				lexer_token_read_string(parser->lexer, &parser->token, func->name, sizeof(func->name));
 				advance(parser, TK_IDENTIFIER);
 				advance(parser, '(');
+				ASTNode **parms = &func->parameters;
+				func->parameter_count = 0;
 				if(parser->token.type != ')')
 				{
 					while(1)
 					{
-						advance(parser, TK_IDENTIFIER); // TODO: save args
+						NODE(Identifier, parm);
+						lexer_token_read_string(parser->lexer, &parser->token, parm->name, sizeof(parm->name));
+						*parms = parm;
+						parms = &((ASTNode*)parm)->next;
+						++func->parameter_count;
+						advance(parser, TK_IDENTIFIER);
 						if(parser->token.type != ',')
 							break;
 						advance(parser, ',');
@@ -557,6 +564,7 @@ static ASTFile *parse_file(const char *filename, ASTProgram *program)
 		printf("Can't read '%s'\n", filename);
 		return NULL;
 	}
+	program->source = data;
 	parse_line(data, program, file);
 
 	for(HashTableEntry *it = file->functions.head; it; it = it->next)
@@ -630,11 +638,6 @@ int get_memory_usage_kb()
 
 typedef struct
 {
-	Instruction *instructions;
-} CompiledFunction;
-
-typedef struct
-{
 	HashTable functions;
 } CompiledFile;
 
@@ -648,7 +651,7 @@ CompiledFile *get_file(const char *name)
 	return entry->value;
 }
 
-CompiledFunction *get_function(CompiledFile *cf, const char *name)
+VMFunction *get_function(CompiledFile *cf, const char *name)
 {
 	if(!cf)
 		return NULL;
@@ -665,11 +668,9 @@ void compile_file(Compiler *c, ASTFile *file)
 	for(HashTableEntry *it = file->functions.head; it; it = it->next)
 	{
 		ASTFunction *f = it->value;
-		Instruction *ins = compile_function(c, f);
-		if(!ins)
+		VMFunction *compfunc = compile_function(c, f);
+		if(!compfunc)
 			continue;
-		CompiledFunction *compfunc = malloc(sizeof(CompiledFunction));
-		compfunc->instructions = ins;
 		// printf("file:%s,instr:%d,name:%s,%d funcs,ast funcs:%d\n",file->path,buf_size(ins),f->name,cf->functions.length,file->functions.length);
 		HashTableEntry *func_entry = hash_table_insert(&cf->functions, f->name);
 		if(func_entry)
@@ -680,15 +681,15 @@ void compile_file(Compiler *c, ASTFile *file)
 	hash_table_insert(&compiled_files, file->path)->value = cf;
 }
 
-Instruction *vm_func_lookup(void *ctx, const char *file, const char *function)
+VMFunction *vm_func_lookup(void *ctx, const char *file, const char *function)
 {
 	CompiledFile *cf = get_file(file);
 	if(!cf)
 		return NULL;
-	CompiledFunction *compfunc = get_function(cf, function);
+	VMFunction *compfunc = get_function(cf, function);
 	if(!compfunc)
 		return NULL;
-	return compfunc->instructions;
+	return compfunc;
 }
 
 int main(int argc, char **argv)
@@ -746,6 +747,7 @@ int main(int argc, char **argv)
 	// 	parse_file(f->path, program);
 	// }
 
+	compiler.source = program->source;
 	// Compile all functions
 	for(HashTableEntry *it = program->files.head; it; it = it->next)
 	{
@@ -774,13 +776,19 @@ int main(int argc, char **argv)
 	void register_c_functions(VM *vm);
 	register_c_functions(vm);
 
-	CompiledFunction *cf = get_function(get_file(input_file), "main");
+	VMFunction *cf = get_function(get_file(input_file), "main");
 	if(cf)
 	{
 		// dump_instructions(&compiler, cf->instructions);
 
-		vm_call_function(vm, input_file, "main", 0);
-		vm_run(vm);
+		vm_call_function_thread(vm, input_file, "main", 0, NULL);
+		while(1)
+		{
+			float dt = 1.f / 20.f;
+			if(!vm_run(vm, dt))
+				break;
+			usleep(20000);
+		}
 	}
 	else
 	{

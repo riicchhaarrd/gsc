@@ -5,6 +5,7 @@
 #define OPCODES(X) \
 	X(PUSH)        \
 	X(POP)         \
+	X(UNDEF)       \
 	X(NOP)         \
 	X(LOAD)        \
 	X(STORE)       \
@@ -14,12 +15,14 @@
 	X(BINOP)       \
 	X(RET)         \
 	X(CALL)        \
+	X(CALL_PTR)    \
 	X(TEST)        \
 	X(JMP)         \
 	X(JZ)          \
 	X(JNZ)         \
 	X(CONST_0)     \
 	X(CONST_1)     \
+	X(TABLE)       \
 	X(WAIT)        \
 	X(LEVEL)       \
 	X(SELF)        \
@@ -38,6 +41,10 @@ static const char *opcode_names[] = {
 #define OPCODE_ENUM_STR(NAME) #NAME,
 	OPCODES(OPCODE_ENUM_STR) NULL,
 };
+
+#define VM_CALL_FLAG_NONE (0)
+#define VM_CALL_FLAG_THREADED (1)
+#define VM_CALL_FLAG_METHOD (2)
 
 // typedef enum
 // {
@@ -103,4 +110,5 @@ typedef struct
 	int32_t offset;
 	uint8_t opcode;
 	Operand operands[MAX_OPERANDS];
+	int line;
 } Instruction;
