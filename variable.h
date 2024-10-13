@@ -12,10 +12,12 @@ typedef enum
 	VAR_FUNCTION,
 	VAR_LOCALIZED_STRING,
 	VAR_OBJECT,
+	VAR_REFERENCE,
 	VAR_MAX
 } VariableType;
 
-static const char *variable_type_names[] = { "UNDEFINED", "STRING",	  "INTEGER",		  "BOOLEAN", "FLOAT", "VECTOR",
-											 "ANIMATION", "FUNCTION", "LOCALIZED_STRING", "OBJECT",	 NULL };
+static const char *variable_type_names[] = { "UNDEFINED", "STRING",	   "INTEGER",  "BOOLEAN",		   "FLOAT",
+											 "VECTOR",	  "ANIMATION", "FUNCTION", "LOCALIZED_STRING", "OBJECT",
+											 "REFERENCE", NULL };
 
 #define VAR_TYPE_FLAG(X) (1 << (X))

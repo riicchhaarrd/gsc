@@ -7,6 +7,13 @@
 #include <setjmp.h>
 #include "variable.h"
 #include "instruction.h"
+#include <core/allocator.h>
+#include <core/ds/hash_trie.h>
+#include <core/ds/object_pool.h>
+#include "string_table.h"
+
+#define VM_THREAD_ID_INVALID (-1)
+typedef int VMThreadId;
 
 typedef struct VM VM;
 typedef int (*vm_CFunction)(VM *);
@@ -16,13 +23,38 @@ void vm_pushinteger(VM*, int);
 float vm_checkfloat(VM *vm, int idx);
 const char *vm_checkstring(VM *vm, int idx);
 void vm_pushstring(VM *vm, const char *str);
+int vm_string_index(VM *vm, const char *s);
 
 typedef struct Variable Variable;
-typedef struct
-{
-    HashTable fields; // Variable*
-} Object;
+typedef struct ObjectField ObjectField;
 
+// https://nullprogram.com/blog/2023/09/30
+
+struct ObjectField
+{
+	ObjectField *child[4];
+	const char *key;
+	Variable *value;
+	ObjectField *next;
+};
+enum { sizeof_ObjectField = sizeof(ObjectField) };
+
+typedef struct Object Object;
+struct Object
+{
+    ObjectField **tail;
+    ObjectField *fields;
+    int field_count;
+    // Maybe set it _on_ the object itself as a ObjectField with a underscore post/pre fix?
+    // Just to save 4/8 bytes lol
+    int refcount;
+};
+enum { sizeof_Object = sizeof(Object) };
+
+ObjectField *vm_object_upsert(VM *vm, Object *obj, const char *key);
+
+typedef int (*vm_CMethod)(VM *, Object *self);
+#pragma pack(push, 1)
 typedef union
 {
     int ival;
@@ -35,39 +67,72 @@ typedef union
         int file;
         int function;
     } funval;
+    Variable *refval;
 } VariableValue;
+#pragma pack(pop)
+enum { sizeof_VariableValue = sizeof(VariableValue) };
+
+// #define VAR_FLAG_NONE (0)
+// #define VAR_FLAG_NO_FREE (1)
 
 struct Variable
 {
 	int type;
-    int refcount;
+    // int flags;
+    // int refcount;
 	VariableValue u;
+    // Variable *next;
 };
 
-#define STACK_FRAME_LIMIT (256)
-#define MAX_LOCAL_VARS (64)
+enum { sizeof_Variable = sizeof(Variable) };
 
 typedef struct
 {
     Variable *locals;
-    size_t local_count;
+    // size_t local_count;
     Instruction *instructions;
     const char *file, *function;
     int ip;
     Variable self;
 } StackFrame;
-
-#define STACK_LIMIT (256)
+enum { sizeof_StackFrame = sizeof(StackFrame) };
 
 typedef struct
 {
-    Variable *stack[STACK_LIMIT];
-    StackFrame frames[STACK_FRAME_LIMIT];
+    int name;
+    Object *object;
+    Variable *arguments;
+} VMEvent;
+enum { sizeof_VMEvent = sizeof(VMEvent) };
+
+typedef enum
+{
+	VM_THREAD_INACTIVE,
+	VM_THREAD_ACTIVE,
+	VM_THREAD_WAITING_TIME,
+	VM_THREAD_WAITING_EVENT
+} VMThreadState;
+
+static const char *vm_thread_state_names[] = { "INACTIVE", "ACTIVE", "WAITING_TIME", "WAITING_EVENT", NULL };
+
+#define VM_STACK_SIZE (256)
+#define VM_FRAME_SIZE (256)
+#define VM_THREAD_POOL_SIZE (2048)
+
+typedef struct
+{
+    VMThreadState state;
+    Variable stack[VM_STACK_SIZE]; // Make pointers?
+    StackFrame frames[VM_FRAME_SIZE];
     StackFrame *frame;
     int sp, bp;
     int result;
     float wait;
+    VMEvent waittill;
+    int *endon;
 } Thread;
+
+enum { sizeof_Thread = sizeof(Thread) };
 
 typedef struct VMFunction VMFunction;
 struct VMFunction
@@ -77,33 +142,66 @@ struct VMFunction
 	size_t local_count;
 };
 
+#define VM_REFCOUNT_NO_FREE (0xdeadbeef)
+
 #define VM_FLAG_NONE (0)
 #define VM_FLAG_VERBOSE (1)
 
+#define VM_MAX_EVENTS_PER_FRAME (1024)
+
 struct VM
 {
-	// size_t string_index;
-    // HashTable stringtable;
     jmp_buf *jmp;
+    Thread *threads[VM_THREAD_POOL_SIZE];
+    size_t thread_count;
     Thread *thread;
+    VMEvent events[VM_MAX_EVENTS_PER_FRAME];
+    size_t event_count;
 	int flags;
 	Variable level;
     Variable game;
-	Arena arena;
+	// Arena arena;
+    Allocator *allocator;
 	Arena c_function_arena;
+
+    // Memory pools
+    struct
+    {
+        ObjectPool threads;
+        ObjectPool stack_frames;
+        // ObjectPool object_fields;
+        // ObjectPool variables;
+        // ObjectPool objects;
+        ObjectPool uo;
+	} pool;
 	void *ctx;
-    char **string_table;
-    HashTable c_functions;
+    StringTable *strings;
+    HashTrie c_functions;
+    HashTrie c_methods;
 	VMFunction *(*func_lookup)(void *ctx, const char *file, const char *function);
 };
 
+// typedef struct
+// {
+//     VM *vm;
+//     VMThreadId thread_id;
+// } VMContext;
+
 void vm_call_function_thread(VM *vm, const char *file, const char *function, size_t nargs, Variable *self);
-bool vm_run(VM *vm, float dt);
-VM *vm_create();
+// bool vm_run(VM *vm, float dt);
+bool vm_run_threads(VM *vm, float dt);
+void vm_init(VM *, Allocator *);
+void vm_cleanup(VM*);
 void vm_register_c_function(VM *vm, const char *name, vm_CFunction callback);
+void vm_register_c_method(VM *vm, const char *name, vm_CMethod callback);
 const char *vm_stringify(VM *vm, Variable *v, char *buf, size_t n);
 size_t vm_argc(VM *vm);
 Variable *vm_argv(VM *vm, size_t idx);
-Variable *vm_create_object();
+Variable vm_create_object(VM *vm);
 void vm_pushvar(VM *vm, Variable*);
+void vm_pushobject(VM *vm, Object *o);
 Thread *vm_thread(VM*);
+void vm_print_thread_info(VM *vm);
+void vm_notify(VM *vm, Object *object, const char *key, size_t nargs);
+void vm_error(VM *vm, const char *fmt, ...);
+// Variable* vm_dup(VM *vm, Variable* v);

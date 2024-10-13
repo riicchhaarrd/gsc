@@ -3,6 +3,28 @@
 #include "lexer.h"
 #include "ast.h"
 
+#ifndef MAX
+	#define MAX(A, B) ((A) > (B) ? (A) : (B))
+#endif
+enum
+{
+	UNION_OBJECT_SIZE =
+		MAX(1, MAX(1, MAX(sizeof_ObjectField, MAX(sizeof_Variable, sizeof_Object))))
+	// sizeof_Unit =
+	// 	MAX(sizeof_Thread, MAX(sizeof_StackFrame, MAX(sizeof_ObjectField, MAX(sizeof_Variable, sizeof_Object))))
+};
+typedef struct
+{
+	char data[UNION_OBJECT_SIZE];
+} UnionObject;
+
+DEFINE_OBJECT_POOL(thread, Thread)
+DEFINE_OBJECT_POOL(stack_frame, StackFrame)
+DEFINE_OBJECT_POOL(uo, UnionObject)
+// DEFINE_OBJECT_POOL(object_field, ObjectField)
+// DEFINE_OBJECT_POOL(variable, Variable)
+// DEFINE_OBJECT_POOL(object, Object)
+
 static void info(VM *vm, const char *fmt, ...)
 {
 	if(!(vm->flags & VM_FLAG_VERBOSE))
@@ -15,19 +37,45 @@ static void info(VM *vm, const char *fmt, ...)
 	printf("[INFO] %s\n", message);
 }
 
-static Variable undef = { .type = VAR_UNDEFINED, .refcount = 0xdeadbeef };
+static Variable undef = { .type = VAR_UNDEFINED };
 
-static Object *create_object()
+static Object *object_for_var(Variable *v)
 {
-	Object *o = calloc(1, sizeof(Object));
-	hash_table_init(&o->fields, 10);
-	return o;
+	return v->u.oval;
+}
+
+static void free_object(VM *vm, Object *o)
+{
+	for(ObjectField *it = o->fields; it;)
+	{
+		ObjectField *field = it;
+		it = it->next;
+		object_pool_deallocate(&vm->pool.uo, field);
+	}
+	o->tail = NULL;
+	o->refcount = 0;
+	o->field_count = 0;
+	o->fields = NULL;
 }
 
 static void strtolower(char *str)
 {
 	for(char *p = str; *p; ++p)
 		*p = tolower(*p);
+}
+
+void vm_print_thread_info(VM *vm)
+{
+	printf("[THREADS]\n");
+	size_t n = vm->thread_count;
+	printf("%d %s\n", n, n > 1 ? "threads" : "thread");
+	printf("=========================================\n");
+	for(size_t i = 0; i < n; i++)
+	{
+		Thread *t = vm->threads[i];
+		printf("%d: %d\n", i, t->state);
+		// printf("\t- %d: %s\n", i, vm_thread_state_names[t->state]);
+	}
 }
 
 static void vm_stacktrace(VM *vm)
@@ -40,10 +88,10 @@ static void vm_stacktrace(VM *vm)
 	printf("\t== sp: %d\n", thr->sp);
 	for(int i = thr->sp - 1; i >= 0; i--)
     {
-		Variable *sv = thr->stack[i];
+		Variable *sv = &thr->stack[i];
 		if(!sv)
 			continue;
-		printf("\t== %d: type:%s, refcount:%d\n", i, variable_type_names[sv->type], sv->refcount);
+		printf("\t== %d: type:%s\n", i, variable_type_names[sv->type]);
 	}
     // printf("====== END OF STACK =====\n");
 }
@@ -52,7 +100,7 @@ static void vm_stacktrace(VM *vm)
 	#define COUNT_OF(x) (sizeof(x) / sizeof((x)[0]))
 #endif
 
-static void vm_error(VM *vm, const char *fmt, ...)
+void vm_error(VM *vm, const char *fmt, ...)
 {
     Thread *thr = vm->thread;
     StackFrame *sf = thr->frame;
@@ -63,7 +111,7 @@ static void vm_error(VM *vm, const char *fmt, ...)
 	vsnprintf(message, sizeof(message), fmt, va);
 	va_end(va);
 	printf("[VM] ERROR: %s on line %d\n", message, current->line);
-	// abort();
+	abort();
 	vm_stacktrace(vm);
 	if(vm->jmp)
 		longjmp(*vm->jmp, 1);
@@ -73,9 +121,9 @@ static Variable *local(VM *vm, size_t index)
 {
     Thread *thr = vm->thread;
     StackFrame *sf = thr->frame;
-	if(index >= sf->local_count)
+	if(index >= buf_size(sf->locals))
 	{
-		vm_error(vm, "Invalid local index");
+		vm_error(vm, "Invalid local index %d/%d", (int)index, (int)buf_size(sf->locals));
 		return NULL;
 	}
 	return &sf->locals[index];
@@ -87,80 +135,173 @@ static void print_locals(VM *vm)
 	StackFrame *sf = thr->frame;
 	printf(" || Local variables ||\n");
 	char str[1024];
-	for(size_t i = 0; i < sf->local_count; ++i)
+	for(size_t i = 0; i < buf_size(sf->locals); ++i)
 	{
 		Variable *lv = local(vm, i);
 		if(lv->type == VAR_UNDEFINED)
 			continue;
 		printf("\t|| local %d (%s): %s\n", i, variable_type_names[lv->type], vm_stringify(vm, lv, str, sizeof(str)));
+		if(lv->type == VAR_OBJECT)
+		{
+			Object *o = object_for_var(lv);
+			printf("%d fields\n", o->field_count);
+			for(ObjectField *it = o->fields; it; it = it->next)
+			{
+				char buf[32];
+				printf("\t\t'%s': %s\n", it->key, vm_stringify(vm, it->value, buf, sizeof(buf)));
+			}
+		}
 	}
 }
 
 static const char *string(VM *vm, size_t idx)
 {
-    return vm->string_table[idx];
+	return string_table_get(vm->strings, idx);
 }
 
-static void incref(VM *vm, Variable **v)
+int vm_string_index(VM *vm, const char *s)
 {
-	if((*v)->refcount == 0xdeadbeef)
+	return string_table_intern(vm->strings, s);
+}
+
+static void incref(VM *vm, Variable *v)
+{
+	if(!v)
 		return;
-	(*v)->refcount++;
-}
-
-static void decref(VM *vm, Variable **v)
-{
-	if(!v || !*v)
+	if(v->type != VAR_OBJECT)
 		return;
-	if((*v)->refcount == 0xdeadbeef)
+	Object *o = object_for_var(v);
+	if(o->refcount == VM_REFCOUNT_NO_FREE)
 		return;
-	if(--(*v)->refcount <= 0)
-    {
-        free(*v);
-        *v = NULL;
-    }
+	++o->refcount;
 }
 
-static Variable *variable()
+static void decref(VM *vm, Variable *v)
 {
-    Variable *var = malloc(sizeof(Variable));
-	var->type = VAR_UNDEFINED;
-	var->refcount = 0;
-	var->u.ival = 0;
-    return var;
+	if(!v)
+		return;
+	if(v->type != VAR_OBJECT)
+		return;
+	Object *o = object_for_var(v);
+	if(o->refcount == VM_REFCOUNT_NO_FREE)
+		return;
+	--o->refcount;
 }
 
-Variable *vm_create_object()
+static void free_var(VM *vm, Variable *v)
 {
-	Variable *v = variable();
-	v->type = VAR_OBJECT;
-	v->u.oval = create_object();
+	switch(v->type)
+	{
+		case VAR_STRING:
+		{
+			free(v->u.sval);
+		}
+		break;
+
+		case VAR_OBJECT:
+		{
+			Object *o = object_for_var(v);
+			for(ObjectField *it = o->fields; it; it = it->next)
+			{
+				Variable *value = it->value;
+				free_var(vm, value);
+			}
+			free_object(vm, o);
+		}
+		break;
+	}
+}
+
+// static Variable *variable(VM *vm)
+// {
+// 	Variable *var = alloc_var(vm);
+// 	var->type = VAR_UNDEFINED;
+// 	var->refcount = 0;
+// 	var->u.ival = 0;
+//     return var;
+// }
+
+static Variable var(VM *vm)
+{
+	return (Variable) { .type = VAR_UNDEFINED };
+}
+
+static Variable ref(VM *vm, Variable *referee)
+{
+	Variable v = var(vm);
+	v.type = VAR_REFERENCE;
+	v.u.refval = referee;
 	return v;
 }
 
-static Variable *dup(Variable *v)
+Variable vm_create_object(VM *vm)
 {
-	Variable *copy = variable();
-	memcpy(copy, v, sizeof(Variable));
-	copy->refcount = 0;
-	return copy;
+	Variable v = { .type = VAR_OBJECT };
+	Object *o = object_pool_allocate(&vm->pool.uo);
+	o->fields = NULL;
+	o->tail = &o->fields;
+	o->refcount = 0;
+	o->field_count = 0;
+	v.u.oval = o;
+	return v;
 }
 
-static void push(VM *vm, Variable *v)
-{
-    Thread *thr = vm->thread;
-    StackFrame *sf = thr->frame;
+// static Variable *dup(VM *vm, Variable *v)
+// {
+// 	Variable *copy = variable(vm);
+// 	memcpy(copy, v, sizeof(Variable));
+// 	copy->refcount = 0;
+// 	return copy;
+// }
 
+// Variable* vm_dup(VM *vm, Variable* v)
+// {
+// 	return dup(vm, v);
+// }
+
+static void push_thread(VM *vm, Thread *thr, Variable v)
+{
+    StackFrame *sf = thr->frame;
+	if(thr->sp < 0)
+		vm_error(vm, "stack ptr < 0");
+	if(thr->sp >= COUNT_OF(thr->stack))
+		vm_error(vm, "stack ptr > max");
     thr->stack[thr->sp++] = v;
 }
 
-static Variable *pop(VM *vm)
+
+static void push(VM *vm, Variable v)
 {
     Thread *thr = vm->thread;
-    Variable *top = thr->stack[--thr->sp];
+	push_thread(vm, thr, v);
+}
+
+static Variable pop_thread(VM *vm, Thread *thr)
+{
+	if(thr->sp <= 0)
+		vm_error(vm, "stack ptr < 0");
+	if(thr->sp > COUNT_OF(thr->stack))
+		vm_error(vm, "stack ptr > max");
+    Variable *top = &thr->stack[--thr->sp];
     // Variable ret = *top;
     // decref(vm, &top);
-    return top;
+    return *top;
+}
+
+static Variable pop(VM *vm)
+{
+    Thread *thr = vm->thread;
+	return pop_thread(vm, thr);
+}
+
+static Variable *pop_ref(VM *vm)
+{
+	Variable value = pop(vm);
+	if(value.type != VAR_REFERENCE)
+	{
+		vm_error(vm, "'%s' is not a variable reference", variable_type_names[value.type]);
+	}
+	return value.u.refval;
 }
 
 static int cast_int(VM* vm, Variable *v)
@@ -174,7 +315,7 @@ static Variable *top(VM *vm, int offset)
 {
     Thread *thr = vm->thread;
     StackFrame *sf = thr->frame;
-    Variable *v = thr->stack[thr->sp - 1 - offset];
+    Variable *v = &thr->stack[thr->sp - 1 - offset];
 	return v;
 }
 
@@ -182,7 +323,7 @@ static void pop_string(VM *vm, char *str, size_t n)
 {
     Thread *thr = vm->thread;
     StackFrame *sf = thr->frame;
-    Variable *top = thr->stack[--thr->sp];
+    Variable *top = &thr->stack[--thr->sp];
 	switch(top->type)
 	{
 		// TODO: directly use a hash and memcmp for integer/other type of keys
@@ -199,7 +340,7 @@ static int pop_int(VM *vm)
 {
     Thread *thr = vm->thread;
     StackFrame *sf = thr->frame;
-    Variable *top = thr->stack[--thr->sp];
+    Variable *top = &thr->stack[--thr->sp];
     if(top->type != VAR_INTEGER)
 		vm_error(vm, "'%s' is not a integer", variable_type_names[top->type]);
     int i = top->u.ival;
@@ -228,7 +369,7 @@ static const char* read_string(VM *vm, Instruction *ins, size_t idx)
     Operand *op = &ins->operands[idx];
     if(op->type != OPERAND_TYPE_INDEXED_STRING)
 		vm_error(vm, "Operand '%s' is not a string", operand_type_names[op->type]);
-	return vm->string_table[op->value.string_index];
+	return string_table_get(vm->strings, op->value.string_index);
 }
 
 static float read_float(VM *vm, Instruction *ins, size_t idx)
@@ -252,7 +393,7 @@ static void print_operand(VM *vm, Operand *operand)
 	}
 	switch(operand->type)
 	{
-		case OPERAND_TYPE_INDEXED_STRING: printf("%s ", vm->string_table[operand->value.string_index]); break;
+		case OPERAND_TYPE_INDEXED_STRING: printf("%s ", string(vm, operand->value.string_index)); break;
 		case OPERAND_TYPE_INT: printf("%d ", operand->value.integer); break;
 		case OPERAND_TYPE_FLOAT: printf("%f ", operand->value.number); break;
 	}
@@ -511,14 +652,43 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 	return result;
 }
 
-void vm_call_function(VM *vm, const char *file, const char *function, size_t nargs, Variable *self);
+static size_t get_available_thread_id(VM *vm)
+{
+	for(size_t i = 0; i < vm->thread_count; ++i)
+	{
+		Thread *t = vm->threads[i];
+		if(t->state != VM_THREAD_INACTIVE)
+			continue;
+		memset(t, 0, sizeof(Thread)); // TODO: free
+		return i;
+	}
+	Thread *t = object_pool_allocate(&vm->pool.threads);
+	memset(t, 0, sizeof(Thread));
+	if(vm->thread_count >= VM_THREAD_POOL_SIZE)
+		vm_error(vm, "vm->thread_count >= VM_THREAD_POOL_SIZE");
+	vm->threads[vm->thread_count++] = t;
+	return vm->thread_count - 1;
+}
+
+static Variable integer(VM *vm, int i)
+{
+	Variable v = var(vm);
+	v.type = VAR_INTEGER;
+	v.u.ival = i;
+	return v;
+}
+
+static void call_function(VM *vm, Thread*, const char *file, const char *function, size_t nargs, Variable *self, bool);
 #define ASSERT_STACK(X)                                                              \
 	do                                                                               \
 	{                                                                                \
 		if(thr->sp != sp + (X))                                                      \
 			vm_error(vm, "Stack cookie failed for '%s'! Expected %d, got %d", opcode_names[ins->opcode], sp + (X), thr->sp); \
 	} while(0)
-static void vm_execute(VM *vm, Instruction *ins)
+
+// To "computed goto" or not to "computed goto" portability wise...
+// GCC feature "labels as values"
+static bool execute_instruction(VM *vm, Instruction *ins)
 {
     Thread *thr = vm->thread;
     StackFrame *sf = thr->frame;
@@ -531,7 +701,7 @@ static void vm_execute(VM *vm, Instruction *ins)
     {
 		case OP_POP:
 		{
-            Variable *v = pop(vm);
+            Variable v = pop(vm);
             decref(vm, &v);
 			ASSERT_STACK(-1);
 		}
@@ -547,7 +717,7 @@ static void vm_execute(VM *vm, Instruction *ins)
 
 		case OP_UNDEF:
 		{
-			push(vm, dup(&undef));
+			push(vm, undef);
 		}
 		break;
 
@@ -564,21 +734,30 @@ static void vm_execute(VM *vm, Instruction *ins)
 
 		case OP_GAME:
 		{
-			push(vm, &vm->game);
+			if(!check_operand(ins, 0, OPERAND_TYPE_NONE))
+				push(vm, ref(vm, &vm->game));
+			else
+				push(vm, vm->game);
 			ASSERT_STACK(1);
 		}
 		break;
 
 		case OP_LEVEL:
 		{
-			push(vm, &vm->level);
+			if(!check_operand(ins, 0, OPERAND_TYPE_NONE))
+				push(vm, ref(vm, &vm->level));
+			else
+				push(vm, vm->level);
 			ASSERT_STACK(1);
 		}
 		break;
 
 		case OP_SELF:
 		{
-			push(vm, &sf->self);
+			if(!check_operand(ins, 0, OPERAND_TYPE_NONE))
+				push(vm, ref(vm, &sf->self));
+			else
+				push(vm, sf->self);
 			ASSERT_STACK(1);
 		}
 		break;
@@ -587,23 +766,19 @@ static void vm_execute(VM *vm, Instruction *ins)
 		{
 			char prop[256] = { 0 };
 			pop_string(vm, prop, sizeof(prop));
-			Variable *obj = pop(vm);
+			Variable *obj = pop_ref(vm);
 			if(obj->type != VAR_OBJECT)
 			{
 				vm_error(vm, "'%s' is not a object", variable_type_names[obj->type]);
 			}
-			Object *o = obj->u.oval;
+			Object *o = object_for_var(obj);
 			if(!o)
 			{
 				vm_error(vm, "object is null");
 			}
-			HashTableEntry *entry = hash_table_find(&o->fields, prop);
-			if(!entry)
-			{
-				entry = hash_table_insert(&o->fields, prop);
-				entry->value = variable();
-			}
-			push(vm, entry->value);
+			int idx = vm_string_index(vm, prop);
+			ObjectField *entry = vm_object_upsert(vm, o, string(vm, idx)); // We're using the StringTable unique char* pointer to pass to upsert, prop wouldn't work
+			push(vm, ref(vm, entry->value));
 			ASSERT_STACK(-1);
 		}
 		break;
@@ -612,33 +787,34 @@ static void vm_execute(VM *vm, Instruction *ins)
 		{
 			char prop[256] = { 0 };
 			pop_string(vm, prop, sizeof(prop));
-			Variable *obj = pop(vm);
-			if(obj->type != VAR_OBJECT)
+			Variable obj = pop(vm);
+			if(obj.type != VAR_OBJECT)
 			{
-				vm_error(vm, "'%s' is not a object", variable_type_names[obj->type]);
+				vm_error(vm, "'%s' is not a object", variable_type_names[obj.type]);
 			}
-			Object *o = obj->u.oval;
+			Object *o = object_for_var(&obj);
 			if(!o)
 			{
 				vm_error(vm, "object is null");
 			}
 			if(!strcmp(prop, "size"))
 			{
-				Variable *v = variable();
-				v->type = VAR_INTEGER;
-				v->u.ival = o->fields.length;
-				push(vm, v);
+				push(vm, integer(vm, o->field_count));
+				// Variable *v = variable(vm);
+				// v->type = VAR_INTEGER;
+				// v->u.ival = o->fields.length;
+				// push(vm, v);
 			}
 			else
 			{
-				HashTableEntry *entry = hash_table_find(&o->fields, prop);
+				ObjectField *entry = vm_object_upsert(NULL, o, prop);
 				if(!entry)
 				{
-					push(vm, &undef);
+					push(vm, undef);
 				}
 				else
 				{
-					push(vm, entry->value);
+					push(vm, *entry->value);
 				}
 			}
 			ASSERT_STACK(-1);
@@ -647,22 +823,22 @@ static void vm_execute(VM *vm, Instruction *ins)
 
 		case OP_STORE:
 		{
-			Variable *dst = pop(vm);
-			Variable *src = pop(vm);
+			Variable *dst = pop_ref(vm);
+			Variable src = pop(vm);
 			incref(vm, &src);
 			// TODO: move
-			if(dst->type == VAR_OBJECT)
-			{
-				free(dst->u.oval);
-			}
-			else if(dst->type == VAR_STRING)
-			{
-				free(dst->u.sval);
-			}
-			dst->type = src->type;
-			memcpy(&dst->u, &src->u, sizeof(dst->u));
+			// if(dst->type == VAR_OBJECT)
+			// {
+			// 	free(dst->u.oval);
+			// }
+			// else if(dst->type == VAR_STRING)
+			// {
+			// 	free(dst->u.sval);
+			// }
+			dst->type = src.type;
+			memcpy(&dst->u, &src.u, sizeof(dst->u));
 			// decref(vm, &dst);
-			push(vm, dup(dst));
+			push(vm, *dst);
 			ASSERT_STACK(-1);
 
 			if(vm->flags & VM_FLAG_VERBOSE)
@@ -677,7 +853,7 @@ static void vm_execute(VM *vm, Instruction *ins)
 			int slot = read_int(vm, ins, 0);
 			Variable *lv = local(vm, slot);
 			// lv->refcount = 0xdeadbeef;
-			push(vm, dup(lv));
+			push(vm, *lv);
 			ASSERT_STACK(1);
 		}
 		break;
@@ -685,10 +861,7 @@ static void vm_execute(VM *vm, Instruction *ins)
 		case OP_CONST_0:
 		case OP_CONST_1:
 		{
-			Variable *v = variable();
-			v->type = VAR_INTEGER;
-			v->u.ival = ins->opcode == OP_CONST_1 ? 1 : 0;
-			push(vm, v);
+			push(vm, integer(vm, ins->opcode == OP_CONST_1 ? 1 : 0));
 			ASSERT_STACK(1);
 		}
 		break;
@@ -700,7 +873,8 @@ static void vm_execute(VM *vm, Instruction *ins)
 			int slot = read_int(vm, ins, 0);
 			Variable *lv = local(vm, slot);
 			// lv->refcount = 0xdeadbeef;
-			push(vm, lv);
+			push(vm, ref(vm, lv));
+			// push(vm, lv);
 			ASSERT_STACK(1);
 		}
 		break;
@@ -725,53 +899,53 @@ static void vm_execute(VM *vm, Instruction *ins)
 		case OP_PUSH:
 		{
             int var_type = read_int(vm, ins, 0);
-            Variable *v = variable();
+            Variable v = var(vm);
 			switch(var_type)
 			{
 				case AST_LITERAL_TYPE_FUNCTION:
 				{
-					v->type = VAR_FUNCTION;
-					v->u.funval.function = read_string_index(vm, ins, 1);
+					v.type = VAR_FUNCTION;
+					v.u.funval.function = read_string_index(vm, ins, 1);
 					if(check_operand(ins, 2, OPERAND_TYPE_INDEXED_STRING))
-						v->u.funval.file = read_string_index(vm, ins, 2);
+						v.u.funval.file = read_string_index(vm, ins, 2);
 					else
-						v->u.funval.file = -1;
+						v.u.funval.file = -1;
 				}
 				break;
 				case AST_LITERAL_TYPE_FLOAT:
 				{
-					v->type = VAR_FLOAT;
-					v->u.fval = read_float(vm, ins, 1);
+					v.type = VAR_FLOAT;
+					v.u.fval = read_float(vm, ins, 1);
 				}
 				break;
 				case AST_LITERAL_TYPE_ANIMATION:
 				{
-					v->type = VAR_ANIMATION;
-					v->u.sval = string(vm, read_string_index(vm, ins, 1));
+					v.type = VAR_ANIMATION;
+					v.u.sval = string(vm, read_string_index(vm, ins, 1));
 				}
 				break;
                 case AST_LITERAL_TYPE_STRING:
 				{
-					v->type = VAR_STRING;
-					v->u.sval = string(vm, read_string_index(vm, ins, 1));
+					v.type = VAR_STRING;
+					v.u.sval = string(vm, read_string_index(vm, ins, 1));
 				}
 				break;
                 case AST_LITERAL_TYPE_LOCALIZED_STRING:
 				{
-					v->type = VAR_LOCALIZED_STRING;
-					v->u.sval = string(vm, read_string_index(vm, ins, 1));
+					v.type = VAR_LOCALIZED_STRING;
+					v.u.sval = string(vm, read_string_index(vm, ins, 1));
 				}
 				break;
 				case AST_LITERAL_TYPE_BOOLEAN:
 				{
-					v->type = VAR_INTEGER;
-					v->u.ival = read_int(vm, ins, 1);
+					v.type = VAR_INTEGER;
+					v.u.ival = read_int(vm, ins, 1);
 				}
 				break;
 				case AST_LITERAL_TYPE_INTEGER:
 				{
-					v->type = VAR_INTEGER;
-					v->u.ival = read_int(vm, ins, 1);
+					v.type = VAR_INTEGER;
+					v.u.ival = read_int(vm, ins, 1);
 				}
 				break;
 				default:
@@ -787,18 +961,16 @@ static void vm_execute(VM *vm, Instruction *ins)
 		
 		case OP_WAIT:
 		{
-			Variable *v = pop(vm);
-			Variable duration = coerce_float(vm, v);
+			Variable v = pop(vm);
+			Variable duration = coerce_float(vm, &v);
 			thr->wait += duration.u.fval;
+			thr->state = VM_THREAD_WAITING_TIME;
 		}
 		break;
 
 		case OP_TABLE:
 		{
-			Variable *v = variable();
-			v->type = VAR_OBJECT;
-			v->u.oval = create_object();
-			push(vm, v);
+			push(vm, vm_create_object(vm));
 		}
 		break;
 
@@ -810,6 +982,7 @@ static void vm_execute(VM *vm, Instruction *ins)
 				vm_error(vm, "bp <= 0");
 			}
 			thr->frame = &thr->frames[--thr->bp];
+			buf_free(thr->frame->locals);
 			// StackFrame *sf = thr->frame;
 			// push(vm, retval);
 		}
@@ -822,14 +995,14 @@ static void vm_execute(VM *vm, Instruction *ins)
 			const char *file = NULL;
 			if(ins->opcode == OP_CALL_PTR)
 			{
-				Variable *func = pop(vm);
-				if(func->type != VAR_FUNCTION)
+				Variable func = pop(vm);
+				if(func.type != VAR_FUNCTION)
 				{
-					vm_error(vm, "'%s' is not a function pointer", variable_type_names[func->type]);
+					vm_error(vm, "'%s' is not a function pointer", variable_type_names[func.type]);
 				}
-				function = string(vm, func->u.funval.function);
-				if(func->u.funval.file != -1)
-					file = string(vm, func->u.funval.file);
+				function = string(vm, func.u.funval.function);
+				if(func.u.funval.file != -1)
+					file = string(vm, func.u.funval.file);
 			} else
 			{
 				function = read_string(vm, ins, 0);
@@ -837,26 +1010,45 @@ static void vm_execute(VM *vm, Instruction *ins)
 					file = read_string(vm, ins, 1);
 			}
 			int call_flags = read_int(vm, ins, 3);
-			Variable *self = NULL;
+			Variable *object = NULL;
 			if(call_flags & VM_CALL_FLAG_METHOD)
 			{
-				self = pop(vm);
+				object = pop_ref(vm);
 			}
             int nargs = cast_int(vm, top(vm, 0));
             info(vm, "CALLING -> %s::%s %d\n", file, function, nargs);
-            vm_call_function(vm, file ? file : sf->file, function, nargs, self);
+
+			if(call_flags & VM_CALL_FLAG_THREADED)
+			{
+				size_t tid = get_available_thread_id(vm);
+				Thread *nt = vm->threads[tid];
+				nt->state = VM_THREAD_ACTIVE;
+
+				for(size_t k = 0; k < nargs; ++k)
+				{
+					Variable arg = pop_thread(vm, thr);
+					push_thread(vm, nt, arg);
+				}
+				push_thread(vm, nt, integer(vm, nargs));
+				call_function(vm, nt, file ? file : sf->file, function, nargs, object, true);
+			}
+			else
+			{
+				call_function(vm, thr, file ? file : sf->file, function, nargs, object, false);
+			}
 			// ASSERT_STACK(-nargs);
+			if(call_flags & VM_CALL_FLAG_THREADED)
+				return false;
 		}
 		break;
 
 		case OP_BINOP:
 		{
 			int op = read_int(vm, ins, 0);
-			Variable *a = pop(vm);
-			Variable *b = pop(vm);
-			Variable *result = variable();
-			*result = binop(vm, a, b, op);
-			info(vm, "binop result: %d\n", result->u.ival);
+			Variable a = pop(vm);
+			Variable b = pop(vm);
+			Variable result = binop(vm, &a, &b, op);
+			info(vm, "binop result: %d\n", result.u.ival);
 			push(vm, result);
 			ASSERT_STACK(-1);
 		}
@@ -871,26 +1063,104 @@ static void vm_execute(VM *vm, Instruction *ins)
 	if(vm->flags & VM_FLAG_VERBOSE)
 	{
 		vm_stacktrace(vm);
-		// getchar();
+		getchar();
 	}
+	return true;
 }
 
-VM *vm_create()
+void vm_cleanup(VM* vm)
 {
-	VM *vm = calloc(1, sizeof(VM));
-    hash_table_init(&vm->c_functions, 10);
+}
 
-	vm->level.refcount = 0xdeadbeef;
-	vm->level.type = VAR_OBJECT;
-	vm->level.u.oval = create_object();
+// static uint64_t permute64(uint64_t x)
+// {
+//     x += 1111111111111111111u; x ^= x >> 32;
+//     x *= 1111111111111111111u; x ^= x >> 32;
+//     return x;
+// }
+// Maybe use integer keys instead?
+
+static uint64_t vm_hash_string(const char *s)
+{
+	uint64_t h = 0x100;
+	for(ptrdiff_t i = 0; s[i]; i++)
+	{
+		h ^= s[i];
+		h *= 1111111111111111111u;
+	}
+	return h;
+}
+
+ObjectField *vm_object_upsert(VM *vm, Object *o, const char *key)
+{
+	ObjectField **m = &o->fields;
+	for(uint64_t h = vm_hash_string(key);; h <<= 2)
+	{
+		if(!*m)
+		{
+			if(!vm)
+			{
+				return NULL;
+			}
+
+			if(!o->tail)
+			{
+				o->fields = NULL;
+				o->tail = &o->fields;
+			}
+
+			ObjectField *new_node = object_pool_allocate(&vm->pool.uo);
+			o->field_count++;
+			memset(new_node, 0, sizeof(ObjectField));
+			new_node->key = key;
+			Variable *v = object_pool_allocate(&vm->pool.uo);
+			v->type = VAR_UNDEFINED;
+			new_node->value = v;
+			new_node->next = NULL;
+			
+			*m = new_node;
+			*o->tail = new_node;
+			o->tail = &new_node->next;
+			return new_node;
+		}
+		if(!strcmp((*m)->key, key))
+		{
+			return *m;
+		}
+		m = &(*m)->child[h >> 62];
+	}
+	return NULL;
+}
+
+void vm_init(VM *vm, Allocator *allocator)
+{
+	memset(vm, 0, sizeof(vm));
+	vm->allocator = allocator;
+
+	uo_init(&vm->pool.uo, (1 << 16), -1, allocator);
+	// variable_init(&vm->pool.variables, (1 << 19), -1, allocator);
+	// object_init(&vm->pool.objects, (1 << 19), -1, allocator);
+	// object_field_init(&vm->pool.object_fields, (1 << 19), -1, allocator);
+	thread_init(&vm->pool.threads, VM_THREAD_POOL_SIZE, -1, allocator);
+	stack_frame_init(&vm->pool.stack_frames, VM_THREAD_POOL_SIZE * VM_FRAME_SIZE, -1, allocator);
+
+	size_t N = 16384;
+	arena_init(&vm->c_function_arena, allocator->malloc(allocator->ctx, N), N);
+
+	// hash_trie_init(&vm->c_functions);
+	// hash_trie_init(&vm->c_methods);
+	// hash_table_init(&vm->c_functions, 10, &allocator);
+    // hash_table_init(&vm->c_methods, 10, &allocator);
 	
-	vm->game.refcount = 0xdeadbeef;
-	vm->game.type = VAR_OBJECT;
-	vm->game.u.oval = create_object();
+	vm->level = vm_create_object(vm);
+	object_for_var(&vm->level)->refcount = VM_REFCOUNT_NO_FREE;
 
-	size_t n = 64 * 10000 * 10000;
-	char *buf = malloc(n); // TODO: free memory
-	arena_init(&vm->arena, buf, n);
+	vm->game = vm_create_object(vm);
+	object_for_var(&vm->game)->refcount = VM_REFCOUNT_NO_FREE;
+
+	// size_t n = 64 * 10000 * 10000;
+	// char *buf = malloc(n); // TODO: free memory
+	// arena_init(&vm->arena, buf, n);
 	return vm;
 }
 
@@ -899,52 +1169,73 @@ void vm_register_c_function(VM *vm, const char *name, vm_CFunction callback)
     char lower[256];
 	snprintf(lower, sizeof(lower), "%s", name);
 	strtolower(lower);
-	hash_table_insert(&vm->c_functions, lower)->value = callback;
+	// hash_table_insert(&vm->c_functions, lower)->value = callback;
+	hash_trie_upsert(&vm->c_functions, lower, vm->allocator)->value = callback;
 }
 
-vm_CFunction vm_get_c_function(VM *vm, const char *name)
+static vm_CFunction get_c_function(VM *vm, const char *name)
 {
     char lower[256];
 	snprintf(lower, sizeof(lower), "%s", name);
 	strtolower(lower);
-	HashTableEntry *entry = hash_table_find(&vm->c_functions, lower);
+	HashTrieNode *entry = hash_trie_upsert(&vm->c_functions, lower, NULL);
+	// HashTableEntry *entry = hash_table_find(&vm->c_functions, lower);
 	if(!entry)
 		return NULL;
 	return entry->value;
 }
 
-bool vm_run(VM *vm, float dt)
+void vm_register_c_method(VM *vm, const char *name, vm_CMethod callback)
 {
-	for(;;)
-    {
-		Thread *thr = vm->thread;
-		if(thr->wait > 0.f)
-		{
-			thr->wait -= dt;
-			return true;
-		}
-		thr->wait = 0.f;
-		StackFrame *sf = thr->frame;
-		if(sf->ip >= buf_size(sf->instructions))
-		{
-			// vm_error(vm, "ip oob");
-			return false;
-		}
-	    Instruction *current = &sf->instructions[sf->ip++];
-		vm_execute(vm, current);
-		if(current->opcode == OP_RET)
-		{
-			break;
-		}
-    }
-	return true;
+    char lower[256];
+	snprintf(lower, sizeof(lower), "%s", name);
+	strtolower(lower);
+	hash_trie_upsert(&vm->c_methods, lower, vm->allocator)->value = callback;
 }
+
+static vm_CMethod get_c_method(VM *vm, const char *name)
+{
+    char lower[256];
+	snprintf(lower, sizeof(lower), "%s", name);
+	strtolower(lower);
+	HashTrieNode *entry = hash_trie_upsert(&vm->c_methods, lower, NULL);
+	if(!entry)
+		return NULL;
+	return entry->value;
+}
+
+// bool vm_run(VM *vm, float dt)
+// {
+// 	for(;;)
+//     {
+// 		Thread *thr = vm->thread;
+// 		if(thr->wait > 0.f)
+// 		{
+// 			thr->wait -= dt;
+// 			return true;
+// 		}
+// 		thr->wait = 0.f;
+// 		StackFrame *sf = thr->frame;
+// 		if(sf->ip >= buf_size(sf->instructions))
+// 		{
+// 			// vm_error(vm, "ip oob");
+// 			return false;
+// 		}
+// 	    Instruction *current = &sf->instructions[sf->ip++];
+// 		vm_execute(vm, current);
+// 		if(current->opcode == OP_RET)
+// 		{
+// 			break;
+// 		}
+//     }
+// 	return true;
+// }
 
 Variable *vm_argv(VM *vm, size_t idx)
 {
 	Thread *thr = vm->thread;
 	int nargs = cast_int(vm, top(vm, 0));
-	return thr->stack[thr->sp - 2 - idx];
+	return &thr->stack[thr->sp - 2 - idx];
 	// return thr->stack[thr->sp - nargs - 1 + idx];
 }
 
@@ -1007,14 +1298,22 @@ int vm_checkinteger(VM *vm, int idx)
 
 void vm_pushstring(VM *vm, const char *str)
 {
-    Variable *v = variable();
-    v->type = VAR_STRING;
-	v->u.sval = strdup(str);
+	Variable v = var(vm);
+	v.type = VAR_STRING;
+	v.u.sval = strdup(str);
 	push(vm, v);
 }
 
 void vm_pushvar(VM *vm, Variable *v)
 {
+	push(vm, *v);
+}
+
+void vm_pushobject(VM *vm, Object *o)
+{
+	Variable v = var(vm);
+	v.type = VAR_OBJECT;
+	v.u.oval = o;
 	push(vm, v);
 }
 
@@ -1023,76 +1322,101 @@ Thread *vm_thread(VM *vm)
 	return vm->thread;
 }
 
+StackFrame *vm_stack_frame(VM *vm)
+{
+	return vm->thread->frame;
+}
+
 void vm_pushinteger(VM *vm, int val)
 {
-    Variable *v = variable();
-    v->type = VAR_INTEGER;
-	v->u.ival = val;
+    Variable v = var(vm);
+    v.type = VAR_INTEGER;
+	v.u.ival = val;
     push(vm, v);
 }
 
 // TODO: make use of namespace
-static void vm_call_c_function(VM *vm, const char *namespace, const char *function, size_t nargs, Variable *self)
+static void call_c_function(VM *vm, const char *namespace, const char *function, size_t nargs, Variable *self)
 {
-	vm->c_function_arena = vm->arena;
-
-	vm_CFunction cfunc = vm_get_c_function(vm, function);
-	if(!cfunc)
+	Arena rollback = vm->c_function_arena;
+	int nret;
+	if(!self)
 	{
-		vm_error(vm, "No builtin function '%s'", function);
+		vm_CFunction cfunc = get_c_function(vm, function);
+		if(!cfunc)
+		{
+			vm_error(vm, "No builtin function '%s'", function);
+		}
+		nret = cfunc(vm);
 	}
-	int nret = cfunc(vm);
+	else
+	{
+		vm_CMethod cmethod = get_c_method(vm, function);
+		if(!cmethod)
+		{
+			vm_error(vm, "No builtin method '%s'", function);
+		}
+		if(!self || self->type != VAR_OBJECT)
+		{
+			vm_error(vm, "'%s' is not a object", variable_type_names[self->type]);
+		}
+		nret = cmethod(vm, object_for_var(&self));
+	}
 	if(nret == 0)
 	{
-		push(vm, dup(&undef));
+		push(vm, undef);
 	}
-	Variable *ret = pop(vm);
+	Variable ret = pop(vm);
 
 	// Pop all args
 	for(size_t i = 0; i < nargs + 1; ++i)
 	{
-		Variable *arg = pop(vm);
+		Variable arg = pop(vm);
 		// decref(vm, &arg);
 	}
 
 	// Put ret back on stack
 	push(vm, ret);
+
+	vm->c_function_arena = rollback;
 }
 
-void vm_call_function(VM *vm, const char *file, const char *function, size_t nargs, Variable *self)
+static void call_function(VM *vm, Thread *thr, const char *file, const char *function, size_t nargs, Variable *self, bool reversed)
 {
 	VMFunction *vmf = vm->func_lookup(vm->ctx, file, function);
     if(!vmf)
     {
-		vm_call_c_function(vm, file, function, nargs, self);
+		call_c_function(vm, file, function, nargs, self);
         return;
 	}
-    Thread *thr = vm->thread;
 	Variable *prev_self = &vm->level;
 	if(thr->bp != 0)
 	{
 		prev_self = &thr->frames[thr->bp - 1].self;
 	}
+	if(thr->bp >= VM_FRAME_SIZE)
+		vm_error(vm, "thr->bp >= VM_FRAME_SIZE");
 	thr->frame = &thr->frames[thr->bp++];
     StackFrame *sf = thr->frame;
+	sf->locals = NULL;
 	sf->self = self ? *self : *prev_self;
-	sf->local_count = vmf->local_count;
-	sf->locals = new(&vm->arena, Variable, vmf->local_count);
-	for(size_t i = 0; i < COUNT_OF(sf->locals); ++i)
+	// sf->local_count = vmf->local_count;
+	// sf->locals = new(&vm->arena, Variable, vmf->local_count);
+	for(size_t i = 0; i < vmf->local_count; ++i)
 	{
+		buf_push(sf->locals, (Variable) { 0 });
 		sf->locals[i].type = VAR_UNDEFINED;
 		sf->locals[i].u.ival = 0;
-		sf->locals[i].refcount = 0xdeadbeef;
 	}
-	pop(vm); //nargs
+	pop_thread(vm, thr); //nargs
 	for(size_t i = 0; i < nargs; ++i)
 	{
-		Variable *arg = pop(vm);
+		Variable arg = pop_thread(vm, thr);
 		// decref(vm, &arg);
 		if(i < vmf->parameter_count)
 		{
-			sf->locals[i] = *arg;
-			sf->locals[i].refcount = 0xdeadbeef;
+			size_t local_idx = reversed ? nargs - i - 1 : i;
+			sf->locals[local_idx] = arg;
 		}
 	}
 	sf->file = file;
@@ -1100,13 +1424,143 @@ void vm_call_function(VM *vm, const char *file, const char *function, size_t nar
     sf->instructions = vmf->instructions;
 	for(size_t i = 0; i < buf_size(vmf->instructions); ++i)
 		print_instruction(vm, &vmf->instructions[i]);
-	getchar();
+	// getchar();
 }
 
 void vm_call_function_thread(VM *vm, const char *file, const char *function, size_t nargs, Variable *self)
 {
-    Thread *thr = calloc(1, sizeof(Thread));
-	// TODO: add to list of threads
-	vm->thread = thr;
-	vm_call_function(vm, file, function, nargs, self);
+	size_t tid = get_available_thread_id(vm);
+	vm->thread = vm->threads[tid];
+	vm->thread->state = VM_THREAD_ACTIVE;
+	push_thread(vm, vm->thread, integer(vm, nargs));
+	call_function(vm, vm->thread, file, function, nargs, self, false);
+	vm->thread = NULL;
+}
+
+static bool variable_eq(Variable *a, Variable *b)
+{
+	if(a->type != b->type)
+		return false;
+	float eps = 0.0001f;
+	switch(a->type)
+	{
+		case VAR_FLOAT: return fabs(a->u.fval - b->u.fval) < eps;
+	}
+	return !memcmp(&a->u, &b->u, sizeof(a->u));
+}
+
+void vm_notify(VM *vm, Object *object, const char *key, size_t nargs)
+{
+	// TODO: args
+
+	int name = vm_string_index(vm, key);
+	if(name == -1)
+	{
+		vm_error(vm, "Can't find string '%s'", key);
+	}
+	VMEvent ev = { .object = object, .name = name, .arguments = NULL };
+	if(vm->event_count >= VM_MAX_EVENTS_PER_FRAME)
+		vm_error(vm, "event_count >= VM_MAX_EVENTS_PER_FRAME");
+	vm->events[vm->event_count++] = ev;
+	// buf_push(vm->events, ev);
+}
+
+static void run_thread(VM *vm, VMThreadId tid)
+{
+	while(vm->threads[tid]->state == VM_THREAD_ACTIVE)
+    {
+		vm->thread = vm->threads[tid];
+		
+		StackFrame *sf = vm->thread->frame;
+		if(sf->ip >= buf_size(sf->instructions))
+		{
+			vm_error(vm, "ip oob");
+		}
+	    Instruction *current = &sf->instructions[sf->ip++];
+		if(!execute_instruction(vm, current))
+		{
+			// vm->thread = vm->threads[tid];
+			break;
+		}
+		if(current->opcode == OP_RET && vm->thread->frame == &vm->thread->frames[0])
+		{
+			vm->thread->state = VM_THREAD_INACTIVE;
+			break;
+		}
+    }
+	vm->thread = NULL;
+}
+
+bool vm_run_threads(VM *vm, float dt)
+{
+	size_t n_active = 0;
+	for(size_t i = 0; i < vm->thread_count; i++)
+	{
+		Thread *t = vm->threads[i];
+		if(t->state != VM_THREAD_INACTIVE)
+		{
+			++n_active;
+		}
+		for(size_t j = 0; j < vm->event_count; j++)
+		{
+			VMEvent *ev = &vm->events[j];
+			for(size_t k = 0; k < buf_size(t->endon); ++k)
+			{
+				if(ev->name == t->endon[k])
+				{
+					t->state = VM_THREAD_INACTIVE;
+					// printf("Thread %d killed by event '%s'\n", i, string(vm, ev->name));
+					break;
+				}
+			}
+		}
+
+		switch(t->state)
+		{
+			case VM_THREAD_WAITING_TIME:
+			{
+				t->wait -= dt;
+				if(t->wait <= 0.f)
+				{
+					t->state = VM_THREAD_ACTIVE;
+					// printf("Thread %d resumed after wait\n", i);
+				}
+			}
+			break;
+
+			case VM_THREAD_INACTIVE:
+			{
+				for(size_t k = 0; k < t->bp; ++k)
+				{
+					StackFrame *sf = &t->frames[--t->bp];
+					buf_free(sf->locals);
+				}
+			}
+			break;
+
+			case VM_THREAD_ACTIVE:
+			{
+				run_thread(vm, i);
+			}
+			break;
+
+			case VM_THREAD_WAITING_EVENT:
+			{
+				for(size_t j = 0; j < vm->event_count; j++)
+				{
+					VMEvent *ev = &vm->events[j];
+					if(ev->name == t->waittill.name && variable_eq(ev->object, t->waittill.object))
+					{
+						t->state = VM_THREAD_ACTIVE;
+						// printf("Thread %d resumed on event '%s'\n", i, string(vm, ev->name));
+					}
+				}
+			}
+			break;
+		}
+	}
+	
+	vm->event_count = 0; // Reset for next frame
+
+	return n_active > 0;
 }

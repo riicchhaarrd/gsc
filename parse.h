@@ -1,6 +1,7 @@
 #pragma once
 #include <core/io/stream_buffer.h>
 #include "lexer.h"
+#include <core/allocator.h>
 
 typedef struct
 {
@@ -8,6 +9,7 @@ typedef struct
 	Token token;
 	char *string;
 	size_t max_string_length;
+	Allocator *allocator;
 } Parser;
 
 typedef struct ASTNode ASTNode;

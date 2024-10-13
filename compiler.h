@@ -4,6 +4,9 @@
 #include <core/ds/buf.h>
 #include <core/arena.h>
 #include <core/ds/list.h>
+#include <core/ds/hash_trie.h>
+#include <core/ds/hash_table.h>
+#include "string_table.h"
 
 typedef struct
 {
@@ -18,16 +21,14 @@ typedef struct VMFunction VMFunction;
 typedef struct
 {
 	size_t variable_index;
-	HashTable variables;
+	HashTrie variables;
 	jmp_buf *jmp;
 
-	size_t string_index;
-	HashTable strings;
     Instruction *instructions;
     // FILE *out;
-    char **string_table;
 	
 	Arena arena;
+	StringTable *strings;
 
 	Scope scopes[COMPILER_MAX_SCOPES];
 	size_t current_scope;
@@ -39,6 +40,6 @@ typedef struct
 } Compiler;
 
 void dump_instructions(Compiler *c, Instruction *instructions);
-VMFunction *compile_function(Compiler *c, ASTFunction *func);
-void compiler_init(Compiler *c, jmp_buf *jmp, Arena arena);
-void compile_file(Compiler *c, ASTFile *f);
+VMFunction *compile_function(Compiler *c, ASTFunction *func, Arena arena);
+void compiler_init(Compiler *c, jmp_buf *jmp, Arena arena, Allocator*, StringTable*);
+void compiler_free(Compiler *);

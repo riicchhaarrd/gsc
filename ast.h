@@ -1,6 +1,7 @@
 #pragma once
 #include <stdbool.h>
 #include <core/ds/hash_table.h>
+#include <core/allocator.h>
 
 typedef struct ASTNode ASTNode;
 typedef ASTNode* ASTNodePtr;
@@ -64,6 +65,7 @@ struct ASTFile
 typedef struct ASTProgram ASTProgram;
 struct ASTProgram
 {
+	Allocator *allocator;
 	HashTable files; // ASTFile
 	char base_path[256];
 	const char *source;

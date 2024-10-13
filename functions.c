@@ -56,7 +56,7 @@ static int dump(VM *vm)
 	Object *o = v->u.oval;
 	char buf[256];
 	printf("[object]\n");
-	for(HashTableEntry *it = o->fields.head; it; it = it->next)
+	for(ObjectField *it = o->fields; it; it = it->next)
 	{
 		printf("\t'%s': %s\n", it->key, vm_stringify(vm, it->value, buf, sizeof(buf)));
 	}
@@ -78,8 +78,8 @@ static int print(VM *vm)
 
 static int spawnstruct(VM *vm)
 {
-	Variable *obj = vm_create_object();
-	vm_pushvar(vm, obj);
+	Variable obj = vm_create_object(vm);
+	vm_pushvar(vm, &obj);
 	return 1;
 }
 
@@ -98,24 +98,37 @@ static int getcvar(VM *vm)
 	return 1;
 
 }
-static int endon(VM *vm)
+static int endon(VM *vm, Object *self)
 {
 	const char *key = vm_checkstring(vm, 0);
-	printf("[VM] TODO implement endon: %s\n", key);
+	Thread *thr = vm_thread(vm);
+	int idx = vm_string_index(vm, key);
+	buf_push(thr->endon, idx);
 	return 0;
 }
 
-static int waittill(VM *vm)
+static int waittill(VM *vm, Object *self)
 {
 	const char *key = vm_checkstring(vm, 0);
-	printf("[VM] TODO implement waittill: %s\n", key);
+	Thread *thr = vm_thread(vm);
+	thr->state = VM_THREAD_WAITING_EVENT;
+	thr->waittill.arguments = NULL;
+	thr->waittill.name = vm_string_index(vm, key);
+	thr->waittill.object = self;
+	if(thr->waittill.name == -1)
+	{
+		vm_error(vm, "Key '%s' not found", key);
+	}
+	// printf("[VM] TODO implement waittill: %s\n", key);
 	return 0;
 }
 
-static int notify(VM *vm)
+static int notify(VM *vm, Object *self)
 {
 	const char *key = vm_checkstring(vm, 0);
-	printf("[VM] TODO implement notify: %s\n", key);
+	Thread *thr = vm_thread(vm);
+	// vm_notify(vm, vm_dup(vm, &thr->frame->self), key, vm_argc(vm));
+	vm_notify(vm, self, key, 0);
 	return 0;
 }
 
@@ -129,7 +142,7 @@ void register_c_functions(VM *vm)
 	vm_register_c_function(vm, "typeof", typeof_);
 	vm_register_c_function(vm, "dump", dump);
 	vm_register_c_function(vm, "spawnstruct", spawnstruct);
-	vm_register_c_function(vm, "endon", endon);
-	vm_register_c_function(vm, "waittill", waittill);
-	vm_register_c_function(vm, "notify", notify);
+	vm_register_c_method(vm, "endon", endon);
+	vm_register_c_method(vm, "waittill", waittill);
+	vm_register_c_method(vm, "notify", notify);
 }

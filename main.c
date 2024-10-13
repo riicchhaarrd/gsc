@@ -8,6 +8,8 @@
 #include "traverse.h"
 #include "compiler.h"
 #include "vm.h"
+#include <unistd.h>
+#include "string_table.h"
 
 static ASTVisitor visitor;
 
@@ -109,7 +111,7 @@ static char *read_text_file(const char *path)
 	long n = 0;
 	fseek(fp, 0, SEEK_END);
 	n = ftell(fp);
-	char *data = malloc(n + 1);
+	char *data = calloc(1, n + 1);
 	rewind(fp);
 	fread(data, 1, n, fp);
 	fclose(fp);
@@ -380,7 +382,7 @@ static ASTFile *add_file(ASTProgram *program, const char *path)
 	HashTableEntry *entry = hash_table_find(&program->files, path);
 	if(!entry)
 	{
-		ASTFile *file = malloc(sizeof(ASTFile));
+		ASTFile *file = calloc(1, sizeof(ASTFile));
 		memset(file, 0, sizeof(ASTFile));
 		snprintf(file->path, sizeof(file->path), "%s", path);
 		for(size_t i = 0; file->path[i]; ++i)
@@ -390,7 +392,7 @@ static ASTFile *add_file(ASTProgram *program, const char *path)
 				file->path[i] = '/';
 			}
 		}
-		hash_table_init(&file->functions, 10); // 1024 function limit for now
+		hash_table_init(&file->functions, 10, program->allocator); // 1024 function limit for now
 
 		entry = hash_table_insert(&program->files, path);
 		entry->value = file;
@@ -503,7 +505,7 @@ static void tokenize(Lexer *lexer)
 	}
 }
 
-static void parse_line(const char *line, ASTProgram *program, ASTFile *file)
+static void parse_line(Allocator *allocator, const char *line, ASTProgram *program, ASTFile *file)
 {
 	char string[16384];
 	Stream s = { 0 };
@@ -524,6 +526,7 @@ static void parse_line(const char *line, ASTProgram *program, ASTFile *file)
 	// tokenize(&l);
 	// return 0;
 	Parser parser = { 0 };
+	parser.allocator = allocator;
 	parser.string = string;
 	parser.max_string_length = sizeof(string);
 	parser.lexer = &l;
@@ -551,7 +554,7 @@ static bool node_fn(ASTNode *n, void *ctx)
 	return false;
 }
 
-static ASTFile *parse_file(const char *filename, ASTProgram *program)
+static ASTFile *parse_file(Allocator *allocator, const char *filename, ASTProgram *program)
 {
 
 	char path[512];
@@ -565,7 +568,7 @@ static ASTFile *parse_file(const char *filename, ASTProgram *program)
 		return NULL;
 	}
 	program->source = data;
-	parse_line(data, program, file);
+	parse_line(allocator, data, program, file);
 
 	for(HashTableEntry *it = file->functions.head; it; it = it->next)
 	{
@@ -661,14 +664,14 @@ VMFunction *get_function(CompiledFile *cf, const char *name)
 	return entry->value;
 }
 
-void compile_file(Compiler *c, ASTFile *file)
+void compile_file(Allocator *allocator, Arena scratch, Compiler *c, ASTFile *file)
 {
 	CompiledFile *cf = calloc(1, sizeof(CompiledFile));
-	hash_table_init(&cf->functions, 16);
+	hash_table_init(&cf->functions, 16, allocator);
 	for(HashTableEntry *it = file->functions.head; it; it = it->next)
 	{
 		ASTFunction *f = it->value;
-		VMFunction *compfunc = compile_function(c, f);
+		VMFunction *compfunc = compile_function(c, f, scratch);
 		if(!compfunc)
 			continue;
 		// printf("file:%s,instr:%d,name:%s,%d funcs,ast funcs:%d\n",file->path,buf_size(ins),f->name,cf->functions.length,file->functions.length);
@@ -694,6 +697,27 @@ VMFunction *vm_func_lookup(void *ctx, const char *file, const char *function)
 
 int main(int argc, char **argv)
 {
+	size_t cap = (1 << 28);
+	char *heap = malloc(cap);
+	printf("[INFO] Allocated %.2f MB\n", (float)cap / 1000.f / 1000.f);
+	Arena perm = { 0 };
+	jmp_buf jmp_;
+	arena_init(&perm, heap, cap);
+	if(setjmp(jmp_))
+	{
+		fprintf(stderr, "[ERROR] Out of memory!\n");
+		exit(-1);
+	}
+	perm.jmp_oom = &jmp_;
+
+	Allocator perm_allocator = arena_allocator(&perm);
+
+	Arena scratch = arena_split(&perm, (1 << 16)); // 25MB
+	Allocator scratch_allocator = arena_allocator(&scratch);
+
+	StringTable strtab;
+	string_table_init(&strtab, arena_split(&perm, (1 << 16)));
+
 	bool verbose = false;
 	char *input_file = NULL;
 	for(int i = 1; i < argc; i++)
@@ -714,31 +738,35 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	hash_table_init(&compiled_files, 12);
+	hash_table_init(&compiled_files, 12, &perm_allocator);
 	
+	Compiler compiler = { 0 };
+	Arena arena;
+	static char arena_buf[8 * 1000 * 1000];
 	jmp_buf jmp;
+	ASTProgram *program = NULL;
+	ASTFile *file = NULL;
 	if(setjmp(jmp))
 	{
-		return 0;
+		fprintf(stderr, "Failed");
+		return -1;
 	}
 	// Interpreter interp = { 0 };
 	// hash_table_init(&interp.stringtable, 16);
 	// interp.jmp = &jmp;
 	void ast_visitor_gsc_init(ASTVisitor *v);
-	Compiler compiler = { 0 };
-	Arena arena;
-	static char arena_buf[8 * 1000 * 1000];
 	arena_init(&arena, arena_buf, sizeof(arena_buf));
-	compiler_init(&compiler, &jmp, arena);
+	compiler_init(&compiler, &jmp, arena, &perm_allocator, &strtab);
 	assert(argc > 1);
 	#ifdef DISK
 	static const char *base_path = "scripts/";
 	
-	ASTProgram *program = malloc(sizeof(ASTProgram));
+	program = new(&scratch, ASTProgram, 1);
+	program->allocator = &scratch_allocator;
 	snprintf(program->base_path, sizeof(program->base_path), "%s", base_path);
 
-	hash_table_init(&program->files, 10);
-	ASTFile *file = parse_file(input_file, program);
+	hash_table_init(&program->files, 10, &scratch_allocator);
+	file = parse_file(&scratch_allocator, input_file, program);
 	// for(HashTableEntry *it = program->files.head; it; it = it->next)
 	// {
 	// 	ASTFile *f = it->value;
@@ -754,24 +782,22 @@ int main(int argc, char **argv)
 		ASTFile *f = it->value;
 		if(!f->parsed)
 			continue;
-		compile_file(&compiler, f);
-	}
-	char **string_table = malloc(sizeof(char*) * compiler.strings.length);
-	
-	size_t idx = 0;
-	for(HashTableEntry *it = compiler.strings.head; it; it = it->next)
-	{
-		string_table[idx++] = it->key;
+		compile_file(&perm_allocator, scratch, &compiler, f);
+		printf("%f MB", get_memory_usage_kb() / 1000.f);
+		getchar();
 	}
 	
-	VM *vm = vm_create();
+	VM *vm = perm_allocator.malloc(perm_allocator.ctx, sizeof(VM));
+	vm_init(vm, &perm_allocator);
 	vm->flags = VM_FLAG_NONE;
 	if(verbose)
 		vm->flags |= VM_FLAG_VERBOSE;
 	vm->jmp = &jmp;
 	vm->ctx = program;
 	vm->func_lookup = vm_func_lookup;
-	vm->string_table = string_table;
+	compiler_free(&compiler);
+	hash_table_destroy(&program->files);
+	vm->strings = &strtab;
 
 	void register_c_functions(VM *vm);
 	register_c_functions(vm);
@@ -785,7 +811,7 @@ int main(int argc, char **argv)
 		while(1)
 		{
 			float dt = 1.f / 20.f;
-			if(!vm_run(vm, dt))
+			if(!vm_run_threads(vm, dt))
 				break;
 			usleep(20000);
 		}
@@ -797,7 +823,20 @@ int main(int argc, char **argv)
 
 	// dump_program(program);
 	// interp.program = program;
-
+	vm_cleanup(vm);
+	for(HashTableEntry *it = compiled_files.head; it; it = it->next)
+	{
+		CompiledFile *cf = it->value;
+		for(HashTableEntry *it_fun = cf->functions.head; it_fun; it_fun = it_fun->next)
+		{
+			VMFunction *vmf = it_fun->value;
+			buf_free(vmf->instructions);
+			free(vmf);
+		}
+		hash_table_clear(&cf->functions);
+		free(cf);
+	}
+	hash_table_clear(&compiled_files);
 	// call_function(&interp, "maps/moscow", "main", 0);
 	printf("%f MB", get_memory_usage_kb() / 1000.f);
 	#else

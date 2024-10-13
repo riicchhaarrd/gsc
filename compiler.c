@@ -1,7 +1,6 @@
 #include "visitor.h"
 #include "lexer.h"
 #include <setjmp.h>
-#include <core/ds/hash_table.h>
 #include "compiler.h"
 
 static Node *node(Compiler *c, Node **list)
@@ -54,21 +53,9 @@ static void error(Compiler *c, const char *fmt, ...)
 		longjmp(*c->jmp, 1);
 }
 
-static size_t intern(Compiler *c, const char *str)
-{
-	HashTableEntry *entry = hash_table_insert(&c->strings, str);
-	if(entry->value)
-	{
-		return *(size_t*)entry->value;
-	}
-	entry->value = malloc(sizeof(size_t));
-	*(size_t*)entry->value = c->string_index++;
-	return c->string_index - 1;
-}
-
 static Operand string(Compiler *c, const char *str)
 {
-	return (Operand) { .type = OPERAND_TYPE_INDEXED_STRING, .value.string_index = intern(c, str) };
+	return (Operand) { .type = OPERAND_TYPE_INDEXED_STRING, .value.string_index = string_table_intern(c->strings, str) };
 }
 
 static Operand integer(int i)
@@ -485,6 +472,22 @@ static void property(Compiler *c, ASTNode *n)
 	}
 }
 
+static int define_local_variable(Compiler *c, const char *name, bool is_parm)
+{
+	Allocator allocator = arena_allocator(&c->arena);
+	HashTrieNode *entry =
+		hash_trie_upsert(&c->variables, name, &allocator); // This is OK, Hash Trie doesn't store the allocator
+	if(entry->value)
+	{
+		if(is_parm)
+			error(c, "Parameter '%s' already defined", name);
+		return *(int *)entry->value;
+	}
+	entry->value = new(&c->arena, int, 1);
+	*(int *)entry->value = c->variable_index++;
+	return c->variable_index - 1;
+}
+
 static void lvalue(Compiler *c, ASTNode *n)
 {
 	switch(n->type)
@@ -494,25 +497,20 @@ static void lvalue(Compiler *c, ASTNode *n)
 		{
 			if(!strcmp(n->ast_identifier_data.name, "level"))
 			{
-				emit(c, OP_LEVEL);
+				emit1(c, OP_LEVEL, integer(1));
 			}
 			else if(!strcmp(n->ast_identifier_data.name, "self"))
 			{
-				emit(c, OP_SELF);
+				emit1(c, OP_SELF, integer(1));
 			}
 			else if(!strcmp(n->ast_identifier_data.name, "game"))
 			{
-				emit(c, OP_GAME);
+				emit1(c, OP_GAME, integer(1));
 			}
 			else
 			{
-				HashTableEntry *entry = hash_table_find(&c->variables, n->ast_identifier_data.name);
-				if(!entry)
-				{
-					entry = hash_table_insert(&c->variables, n->ast_identifier_data.name);
-					entry->integer = c->variable_index++;
-				}
-				emit4(c, OP_REF, integer(entry->integer), NONE, NONE, NONE);
+				int idx = define_local_variable(c, n->ast_identifier_data.name, false);
+				emit4(c, OP_REF, integer(idx), NONE, NONE, NONE);
 			}
 		}
 		break;
@@ -638,12 +636,12 @@ IMPL_VISIT(ASTIdentifier)
 	}
 	else
 	{
-		HashTableEntry *entry = hash_table_find(&c->variables, n->name);
+		HashTrieNode *entry = hash_trie_upsert(&c->variables, n->name, NULL);
 		if(!entry)
 		{
 			error(c, "No variable '%s'", n->name);
 		}
-		emit4(c, OP_LOAD, integer(entry->integer), NONE, NONE, NONE);
+		emit4(c, OP_LOAD, integer(*(int*)entry->value), NONE, NONE, NONE);
 	}
 	// emit4(c, OP_LOAD, string(c, n->name), NONE, NONE, NONE);
 }
@@ -702,7 +700,8 @@ IMPL_VISIT(ASTCallExpr)
 	emit2(c, OP_PUSH, integer(AST_LITERAL_TYPE_INTEGER), integer(n->numarguments));
 	if(n->object)
 	{
-		visit(n->object);
+		// visit(n->object);
+		lvalue(c, n->object);
 	}
 	callee(c, n->callee, call_flags, n->numarguments);
 }
@@ -723,17 +722,20 @@ IMPL_VISIT(ASTBlockStmt)
 	}
 }
 
-void compiler_init(Compiler *c, jmp_buf *jmp, Arena arena)
+void compiler_init(Compiler *c, jmp_buf *jmp, Arena arena, Allocator *allocator, StringTable *strtab)
 {
 	// c->out = fopen("compiled.gasm", "w");
 	c->variable_index = 0;
-	hash_table_init(&c->variables, 10);
+	hash_trie_init(&c->variables);
 	
-	c->string_index = 0;
-	hash_table_init(&c->strings, 16);
+	c->strings = strtab;
 	c->arena = arena;
 
 	c->jmp = jmp;
+}
+
+void compiler_free(Compiler *c)
+{
 }
 
 static void print_instruction(Compiler *c, Instruction *instr)
@@ -746,7 +748,7 @@ static void print_instruction(Compiler *c, Instruction *instr)
 			switch(instr->operands[i].type)
 			{
 				case OPERAND_TYPE_INDEXED_STRING:
-					printf("%s ", c->string_table[instr->operands[i].value.string_index]);
+					printf("%s ", string_table_get(c->strings, instr->operands[i].value.string_index));
 					break;
 				case OPERAND_TYPE_INT:
 					printf("%d ", instr->operands[i].value.integer);
@@ -776,7 +778,7 @@ IMPL_VISIT(ASTFunction)
 
 #include "vm.h"
 
-VMFunction *compile_function(Compiler *c, ASTFunction *n)
+VMFunction *compile_function(Compiler *c, ASTFunction *n, Arena arena)
 {
 	VMFunction *vmf = malloc(sizeof(VMFunction));
 	jmp_buf *prev = c->jmp;
@@ -789,23 +791,17 @@ VMFunction *compile_function(Compiler *c, ASTFunction *n)
 			longjmp(*prev, 1);
 		return NULL;
 	}
+	c->arena = arena;
 	c->instructions = NULL;
 	c->jmp = &jmp;
 	c->variable_index = 0;
-	hash_table_clear(&c->variables);
 	vmf->parameter_count = n->parameter_count;
 	debug_info_node(c, n);
 	for(ASTNode *it = n->parameters; it; it = it->next)
     {
 		if(it->type != AST_IDENTIFIER)
 			error(c, "Expected identifier");
-		HashTableEntry *entry = hash_table_find(&c->variables, it->ast_identifier_data.name);
-		if(entry)
-		{
-			error(c, "Parameter '%s' already defined", it->ast_identifier_data.name);
-		}
-		entry = hash_table_insert(&c->variables, it->ast_identifier_data.name);
-		entry->integer = c->variable_index++;
+		define_local_variable(c, it->ast_identifier_data.name, true);
     }
 	visit(n->body);
 	vmf->local_count = c->variable_index;
