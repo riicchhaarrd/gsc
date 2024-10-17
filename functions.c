@@ -96,6 +96,13 @@ static int spawnstruct(VM *vm)
 	return 1;
 }
 
+static int spawn(VM *vm)
+{
+	Variable obj = vm_create_object(vm);
+	vm_pushvar(vm, &obj);
+	return 1;
+}
+
 static int typeof_(VM *vm)
 {
 	Variable *v = vm_argv(vm, 0);
@@ -172,14 +179,67 @@ float dot(float *a, float *b)
 	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
+static void normalize(float *v)
+{
+	float l = sqrtf(dot(v, v));
+	for(int k = 0; k < 3; ++k)
+		v[k] /= l;
+}
+
+#define M_PI (3.14159)
+#define DEG2RAD ((float)M_PI / 180.f);
+
+static float radians(float f)
+{
+	return f * DEG2RAD;
+}
+
+// TODO: test results
+
 static int vectornormalize(VM *vm)
 {
 	float v[3];
 	vm_checkvector(vm, 0, v);
-	float l = sqrtf(dot(v, v));
-	for(int k = 0; k < 3; ++k)
-		v[k] /= l;
+	normalize(v);
 	vm_pushvector(vm, v);
+	return 1;
+}
+static int vectorscale(VM *vm)
+{
+	float v[3];
+	vm_checkvector(vm, 0, v);
+	float scale = vm_checkfloat(vm, 1);
+	for(int i = 0; i < 3; ++i)
+		v[i] *= scale;
+	vm_pushvector(vm, v);
+	return 1;
+}
+
+static int vectortoangles(VM *vm)
+{
+	float v[3];
+	vm_checkvector(vm, 0, v);
+	float pitch = asinf(-v[1]);
+	float yaw = atan2f(v[0], v[2]);
+	float angles[3];
+	angles[1] = yaw;
+	angles[0] = pitch;
+	angles[2] = 0.f;
+	vm_pushvector(vm, angles);
+	return 1;
+}
+
+static int anglestoforward(VM *vm)
+{
+	float v[3];
+	vm_checkvector(vm, 0, v);
+	float yaw = v[1];
+	float forward[3];
+	forward[0] = cosf(radians(yaw));
+	forward[1] = sinf(radians(yaw));
+	forward[2] = 0.f;
+	normalize(forward);
+	vm_pushvector(vm, forward);
 	return 1;
 }
 
@@ -190,8 +250,23 @@ static int randomint(VM *vm)
 	return 1;
 }
 
+static int breakpoint(VM *vm)
+{
+	void vm_debugger(VM *vm);
+	vm_debugger(vm);
+	return 0;
+}
+
+static int getchar_(VM *vm)
+{
+	vm_pushinteger(vm, getchar());
+	return 1;
+}
+
 void register_c_functions(VM *vm)
 {
+	vm_register_c_function(vm, "breakpoint", breakpoint);
+	vm_register_c_function(vm, "getchar", getchar_);
 	vm_register_c_function(vm, "print", print);
 	vm_register_c_function(vm, "println", println);
 	vm_register_c_function(vm, "setexpfog", setexpfog);
@@ -202,16 +277,22 @@ void register_c_functions(VM *vm)
 	vm_register_c_function(vm, "typeof", typeof_);
 	vm_register_c_function(vm, "dump", dump);
 	vm_register_c_function(vm, "spawnstruct", spawnstruct);
+	vm_register_c_function(vm, "getentarray", spawnstruct);
+	vm_register_c_function(vm, "spawn", spawn);
 	vm_register_c_method(vm, "endon", endon);
 	vm_register_c_method(vm, "waittill", waittill);
 	vm_register_c_method(vm, "notify", notify);
 
 	vm_register_c_function(vm, "randomint", randomint);
 	vm_register_c_function(vm, "vectornormalize", vectornormalize);
+	vm_register_c_function(vm, "vectorscale", vectorscale);
+	vm_register_c_function(vm, "vectortoangles", vectortoangles);
+	vm_register_c_function(vm, "anglestoforward", anglestoforward);
 	vm_register_c_function(vm, "assertex", dummy_0);
 	vm_register_c_function(vm, "precachemodel", dummy_0);
 	vm_register_c_function(vm, "precachevehicle", dummy_0);
 	vm_register_c_function(vm, "precacheturret", dummy_0);
 	vm_register_c_function(vm, "precacheshader", dummy_0);
 	vm_register_c_function(vm, "loadfx", dummy_ret_1);
+	vm_register_c_function(vm, "playloopedfx", dummy_ret_1);
 }

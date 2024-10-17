@@ -271,7 +271,7 @@ ASTNode *nud_thread_call(Parser *parser, Token *token)
 	ASTNode *fn = parse_function_name(parser, NULL);
 	advance(parser, '(');
 	ASTNodePtr n = call_expression(parser, fn);
-	n->ast_call_expr_data.threaded = false;
+	n->ast_call_expr_data.threaded = true;
 	n->ast_call_expr_data.object = NULL;
 	return (ASTNode *)n;
 }

@@ -11,6 +11,12 @@
 #include <unistd.h>
 #include "string_table.h"
 
+static void strtolower(char *str)
+{
+	for(char *p = str; *p; ++p)
+		*p = tolower(*p);
+}
+
 static ASTVisitor visitor;
 
 #define DISK
@@ -647,22 +653,37 @@ void compile_file(Allocator *allocator, Arena scratch, Compiler *c, ASTFile *fil
 		VMFunction *compfunc = compile_function(c, file, f, scratch);
 		if(!compfunc)
 			continue;
+		char lower_function[256];
+		snprintf(lower_function, sizeof(lower_function), "%s", f->name);
+		strtolower(lower_function);
 		// printf("file:%s,instr:%d,name:%s,%d funcs,ast funcs:%d\n",file->path,buf_size(ins),f->name,cf->functions.length,file->functions.length);
-		HashTableEntry *func_entry = hash_table_insert(&cf->functions, f->name);
+		HashTableEntry *func_entry = hash_table_insert(&cf->functions, lower_function);
 		if(func_entry)
 		{
 			func_entry->value = compfunc;
 		}
 	}
-	hash_table_insert(&compiled_files, file->path)->value = cf;
+    char lower_file[256];
+	snprintf(lower_file, sizeof(lower_file), "%s", file->path);
+	strtolower(lower_file);
+	hash_table_insert(&compiled_files, lower_file)->value = cf;
 }
 
 VMFunction *vm_func_lookup(void *ctx, const char *file, const char *function)
 {
-	CompiledFile *cf = get_file(file);
+    char lower_file[256];
+	snprintf(lower_file, sizeof(lower_file), "%s", file);
+	strtolower(lower_file);
+
+	CompiledFile *cf = get_file(lower_file);
 	if(!cf)
 		return NULL;
-	VMFunction *compfunc = get_function(cf, function);
+		
+    char lower_function[256];
+	snprintf(lower_function, sizeof(lower_function), "%s", function);
+	strtolower(lower_function);
+
+	VMFunction *compfunc = get_function(cf, lower_function);
 	if(!compfunc)
 		return NULL;
 	return compfunc;
@@ -673,7 +694,7 @@ int main(int argc, char **argv)
 	size_t cap = (1 << 29);
 	char *heap = malloc(cap);
 	printf("[INFO] Allocated %.2f MB\n", (float)cap / 1000.f / 1000.f);
-	getchar();
+	// getchar();
 	Arena perm = { 0 };
 	jmp_buf jmp_;
 	arena_init(&perm, heap, cap);
@@ -760,7 +781,7 @@ int main(int argc, char **argv)
 		printf("%f MB", get_memory_usage_kb() / 1000.f);
 		// getchar();
 	}
-	getchar();
+	// getchar();
 	
 	VM *vm = perm_allocator.malloc(perm_allocator.ctx, sizeof(VM));
 	vm_init(vm, &perm_allocator);

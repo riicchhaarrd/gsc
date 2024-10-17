@@ -136,6 +136,9 @@ typedef struct
     float wait;
     VMEvent waittill;
     int *endon;
+    struct{
+		const char *file, *function;
+	} caller;
 } Thread;
 
 enum { sizeof_Thread = sizeof(Thread) };

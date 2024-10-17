@@ -2,6 +2,7 @@
 #include <math.h>
 #include "lexer.h"
 #include "ast.h"
+#include <signal.h>
 
 #ifndef MAX
 	#define MAX(A, B) ((A) > (B) ? (A) : (B))
@@ -71,6 +72,66 @@ static void strtolower(char *str)
 		*p = tolower(*p);
 }
 
+static const char *string(VM *vm, size_t idx)
+{
+	return string_table_get(vm->strings, idx);
+}
+
+int vm_string_index(VM *vm, const char *s)
+{
+	return string_table_intern(vm->strings, s);
+}
+
+static void print_callstack(Thread *thr)
+{
+	printf("____________________________________________\n");
+	if(thr->caller.file && thr->caller.function)
+	{
+		printf("\t%s::%s\n", thr->caller.file, thr->caller.function);
+	}
+	else
+	{
+		printf("\t(internal)\n");
+	}
+	if(thr->bp - 1 <= 0)
+	{
+		printf("\tNo callstack.\n");
+	}
+	else
+	{
+		for(int i = 0; i < thr->bp - 1; i++)
+		{
+			StackFrame *prev_sf = &thr->frames[i];
+			printf("\t-> %s::%s\n", prev_sf->file, prev_sf->function);
+		}
+	}
+	printf("____________________________________________\n");
+}
+
+static void print_stackframe(Thread *thr)
+{
+
+    StackFrame *sf = NULL;
+	if(thr->bp > 0)
+	{
+		sf = &thr->frames[thr->bp - 1];
+	}
+	// printf("========= STACK =========\n");
+	if(sf)
+	{
+		printf("\t== ip: %d\n", sf->ip);
+	}
+	printf("\t== sp: %d\n", thr->sp);
+	printf("\t== bp: %d\n", thr->bp);
+	for(int i = thr->sp - 1; i >= 0; i--)
+    {
+		Variable *sv = &thr->stack[i];
+		if(!sv)
+			continue;
+		printf("\t== %d: type:%s\n", i, variable_type_names[sv->type]);
+	}
+}
+
 void vm_print_thread_info(VM *vm)
 {
 	if(vm->thread_read_idx == vm->thread_write_idx)
@@ -82,8 +143,44 @@ void vm_print_thread_info(VM *vm)
 	for(size_t i = 0; i < n; i++)
 	{
 		Thread *t = vm->thread_buffer[(vm->thread_read_idx + i) % VM_THREAD_POOL_SIZE];
-		printf("%d: %d\n", i, t->state);
+    	StackFrame *sf = stack_frame(vm, t);
+		printf("%d: %s %s::%s", i, vm_thread_state_names[t->state], sf->file, sf->function);
+		if(t->state == VM_THREAD_WAITING_EVENT)
+		{
+			printf(" (event=%s)", string(vm, t->waittill.name));
+		}
+		printf("\n");
+		print_stackframe(t);
+		print_callstack(t);
 		// printf("\t- %d: %s\n", i, vm_thread_state_names[t->state]);
+	}
+}
+
+static void print_variable(VM *vm, const char *key, Variable *value, int indent)
+{
+	char buf[256];
+	for(int i = 0; i < indent; ++i)
+		putchar('\t');
+	printf("'%s': %s\n", key, vm_stringify(vm, value, buf, sizeof(buf)));
+}
+
+static void print_object(VM *vm, const char *key, Variable *v, int indent)
+{
+	Object *o = object_for_var(v);
+	for(ObjectField *it = o->fields; it; it = it->next)
+	{
+		print_variable(vm, it->key, it->value, indent);
+		if(it->value->type == VAR_OBJECT)
+			print_object(vm, it->key, it->value, indent + 1);
+	}
+}
+
+static void print_globals(VM *vm)
+{
+	for(int i = 0; i < VAR_GLOB_MAX; ++i)
+	{
+		printf("global %s: %s\n", variable_globals[i], variable_type_names[vm->globals[i].type]);
+		print_object(vm, variable_globals[i], &vm->globals[i], 1);
 	}
 }
 
@@ -104,6 +201,7 @@ static void vm_stacktrace(VM *vm)
 			continue;
 		printf("\t== %d: type:%s\n", i, variable_type_names[sv->type]);
 	}
+	print_callstack(thr);
     // printf("====== END OF STACK =====\n");
 }
 
@@ -128,8 +226,10 @@ void vm_error(VM *vm, const char *fmt, ...)
 		   current ? current->line : -1,
 		   sf && sf->file ? sf->file : "?",
 		   sf && sf->function ? sf->function : "?");
+	// vm_stacktrace(vm);
+	// print_globals(vm);
+	// vm_print_thread_info(vm);
 	abort();
-	vm_stacktrace(vm);
 	if(vm->jmp)
 		longjmp(*vm->jmp, 1);
 }
@@ -171,14 +271,20 @@ static void print_locals(VM *vm)
 	}
 }
 
-static const char *string(VM *vm, size_t idx)
+void vm_debugger(VM *vm)
 {
-	return string_table_get(vm->strings, idx);
-}
-
-int vm_string_index(VM *vm, const char *s)
-{
-	return string_table_intern(vm->strings, s);
+	printf("========= BREAKPOINT =========\n");
+	// TODO
+	vm_stacktrace(vm);
+	print_globals(vm);
+	print_locals(vm);
+	vm_print_thread_info(vm);
+	printf("========= BREAKPOINT =========\n");
+#ifdef _WIN32
+	__debugbreak();
+#else
+	raise(SIGTRAP);
+#endif
 }
 
 static void incref(VM *vm, Variable *v)
@@ -419,7 +525,6 @@ static void print_operand(VM *vm, Operand *operand, FILE *fp)
 
 static void print_instruction(VM *vm, Instruction *instr, FILE *fp)
 {
-	fprintf(fp, "%d: %s ", instr->offset, opcode_names[instr->opcode]);
 	switch(instr->opcode)
 	{
 		case OP_PUSH:
@@ -462,6 +567,10 @@ static VariableType promote_type(VariableType lhs, VariableType rhs)
 	{
 		return VAR_STRING;
 	}
+	if(lhs == VAR_VECTOR || rhs == VAR_VECTOR)
+	{
+		return VAR_VECTOR;
+	}
 	if(lhs == VAR_FLOAT || rhs == VAR_FLOAT)
 	{
 		return VAR_FLOAT;
@@ -473,10 +582,6 @@ static VariableType promote_type(VariableType lhs, VariableType rhs)
 	if(lhs == VAR_BOOLEAN || rhs == VAR_BOOLEAN)
 	{
 		return VAR_INTEGER;
-	}
-	if(lhs == VAR_VECTOR || rhs == VAR_VECTOR)
-	{
-		return VAR_VECTOR;
 	}
 	return lhs;
 }
@@ -494,7 +599,7 @@ const char *vm_stringify(VM *vm, Variable *v, char *buf, size_t n)
 		case VAR_STRING: return v->u.sval;
 		case VAR_OBJECT: return "[object]";
 		case VAR_FUNCTION: return "[function]";
-		case VAR_VECTOR: snprintf(buf, n, "(%.2f %.2f %.2f)", v->u.vval[0], v->u.vval[1], v->u.vval[2]); return buf;
+		case VAR_VECTOR: snprintf(buf, n, "(%.2f, %.2f, %.2f)", v->u.vval[0], v->u.vval[1], v->u.vval[2]); return buf;
 	}
 	return NULL;
 }
@@ -1152,7 +1257,7 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 			if(v.type != VAR_UNDEFINED)
 			{
 				Variable duration = coerce_float(vm, &v);
-				thr->wait += duration.u.fval;
+				thr->wait = duration.u.fval;
 				thr->state = VM_THREAD_WAITING_TIME;
 			}
 			else
@@ -1250,16 +1355,21 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 				memset(nt, 0, sizeof(Thread));
 				nt->bp = 0;
 				nt->state = VM_THREAD_ACTIVE;
+				pop_thread(vm, thr); //nargs
 				
 				for(size_t k = 0; k < nargs; ++k)
 				{
 					Variable arg = pop_thread(vm, thr);
 					push_thread(vm, nt, arg);
 				}
+				push_thread(vm, thr, undef); // return value for caller thread
 				push_thread(vm, nt, integer(vm, nargs));
 				call_function(vm, nt, file ? file : sf->file, function, nargs, object, true);
+				nt->caller.file = sf->file;
+				nt->caller.function = sf->function;
 				add_thread(vm, nt);
-				return false;
+				// vm->thread = nt;
+				// return false;
 			}
 			else
 			{
@@ -1293,6 +1403,7 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 	if(vm->flags & VM_FLAG_VERBOSE)
 	{
 		vm_stacktrace(vm);
+		// vm_print_thread_info(vm);
 		// getchar();
 	}
 	return true;
@@ -1760,6 +1871,11 @@ bool vm_run_threads(VM *vm, float dt)
 		Thread *t = remove_thread(vm);
 		if(!t)
 			break;
+		StackFrame *sf = NULL;
+		if(t->bp != -1)
+			sf = &t->frames[t->bp - 1];
+		// printf("Processing thread %s::%s (%s)\n", sf ? sf->file : "?", sf ? sf->function : "?", vm_thread_state_names[t->state]);
+		// getchar();
 		for(size_t j = 0; j < vm->event_count; j++)
 		{
 			VMEvent *ev = &vm->events[j];
@@ -1773,16 +1889,20 @@ bool vm_run_threads(VM *vm, float dt)
 				}
 			}
 		}
+		// if(t->state != VM_THREAD_INACTIVE)
+		// {
+		// 	add_thread(vm, t);
+		// }
 		switch(t->state)
 		{
 			case VM_THREAD_WAITING_TIME:
 			{
-				t->wait -= dt;
 				if(t->wait <= 0.f)
 				{
 					t->state = VM_THREAD_ACTIVE;
 					// printf("Thread %d resumed after wait\n", i);
 				}
+				t->wait -= dt;
 			}
 			break;
 
