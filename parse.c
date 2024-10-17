@@ -201,7 +201,8 @@ ASTNode *nud_literal(Parser *parser, Token *t)
 		case TK_MOD:
 		{
 			NODE(Literal, n);
-			n->type = AST_LITERAL_TYPE_ANIMATION;
+			n->type = AST_LITERAL_TYPE_STRING;
+			// n->type = AST_LITERAL_TYPE_ANIMATION;
 			lexer_token_read_string(parser->lexer, &parser->token, parser->string, parser->max_string_length);
 			advance(parser, TK_IDENTIFIER);
 			n->value.string = strdup(parser->string);
@@ -475,11 +476,28 @@ static const Operator operator_table[TK_MAX] = {
 
 ASTNode *nud_unary(Parser *parser, Token *token)
 {
-    NODE(UnaryExpr, n);
-    n->argument = parse_expression(parser, operator_table[token->type].precedence);
-    n->op = token->type;
-	n->prefix = true;
-	return (ASTNode *)n;
+	ASTNode *result = NULL;
+	if(token->type == '#')
+	{
+		lexer_token_read_string(parser->lexer, &parser->token, parser->string, parser->max_string_length);
+		if(strcmp(parser->string, "animtree"))
+			lexer_error(parser->lexer, "Expected animtree directive");
+		advance(parser, TK_IDENTIFIER);
+
+		NODE(Literal, n);
+		n->type = AST_LITERAL_TYPE_STRING;
+		n->value.string = strdup(parser->animtree);
+		result = n;
+	}
+	else
+	{
+		NODE(UnaryExpr, n);
+		n->argument = parse_expression(parser, operator_table[token->type].precedence);
+		n->op = token->type;
+		n->prefix = true;
+		result = n;
+	}
+	return (ASTNode *)result;
 }
 
 ASTNode *parse_nud(Parser *parser, Token *token)

@@ -12,17 +12,21 @@
 #include <core/ds/object_pool.h>
 #include "string_table.h"
 
-#define VM_THREAD_ID_INVALID (-1)
-typedef int VMThreadId;
+// #define VM_THREAD_ID_INVALID (-1)
+// typedef int VMThreadId;
 
 typedef struct VM VM;
 typedef int (*vm_CFunction)(VM *);
 
 int vm_checkinteger(VM*, int);
 void vm_pushinteger(VM*, int);
+void vm_pushbool(VM *vm, bool b);
+void vm_pushundefined(VM *vm);
 float vm_checkfloat(VM *vm, int idx);
+void vm_checkvector(VM *vm, int idx, float *outvec);
 const char *vm_checkstring(VM *vm, int idx);
 void vm_pushstring(VM *vm, const char *str);
+void vm_pushvector(VM *vm, float*);
 int vm_string_index(VM *vm, const char *s);
 
 typedef struct Variable Variable;
@@ -110,10 +114,12 @@ typedef enum
 	VM_THREAD_INACTIVE,
 	VM_THREAD_ACTIVE,
 	VM_THREAD_WAITING_TIME,
+	VM_THREAD_WAITING_FRAME,
 	VM_THREAD_WAITING_EVENT
 } VMThreadState;
 
-static const char *vm_thread_state_names[] = { "INACTIVE", "ACTIVE", "WAITING_TIME", "WAITING_EVENT", NULL };
+static const char *vm_thread_state_names[] = { "INACTIVE",		"ACTIVE",		 "WAITING_TIME",
+											   "WAITING_FRAME", "WAITING_EVENT", NULL };
 
 #define VM_STACK_SIZE (256)
 #define VM_FRAME_SIZE (256)
@@ -124,7 +130,7 @@ typedef struct
     VMThreadState state;
     Variable stack[VM_STACK_SIZE]; // Make pointers?
     StackFrame frames[VM_FRAME_SIZE];
-    StackFrame *frame;
+    // StackFrame *frame;
     int sp, bp;
     int result;
     float wait;
@@ -152,14 +158,18 @@ struct VMFunction
 struct VM
 {
     jmp_buf *jmp;
-    Thread *threads[VM_THREAD_POOL_SIZE];
-    size_t thread_count;
+    Thread *thread_buffer[VM_THREAD_POOL_SIZE];
+    int thread_read_idx;
+    int thread_write_idx;
+    
+    // size_t thread_count;
     Thread *thread;
     VMEvent events[VM_MAX_EVENTS_PER_FRAME];
     size_t event_count;
 	int flags;
-	Variable level;
-    Variable game;
+    Variable globals[VAR_GLOB_MAX];
+	// Variable level;
+    // Variable game;
 	// Arena arena;
     Allocator *allocator;
 	Arena c_function_arena;

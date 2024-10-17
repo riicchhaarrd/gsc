@@ -24,10 +24,9 @@
 	X(CONST_1)     \
 	X(TABLE)       \
 	X(WAIT)        \
-	X(LEVEL)       \
-	X(SELF)        \
-	X(GAME)        \
-	X(UNARY)
+	X(UNARY)       \
+	X(VECTOR)      \
+	X(GLOB)
 
 typedef enum
 {

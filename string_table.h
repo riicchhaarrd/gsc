@@ -40,6 +40,8 @@ static void string_table_init(StringTable *table, Arena arena)
     int h = sz >> 2;
     arena_init(&table->begin, arena.beg, h);
     arena_init(&table->end, arena.beg + h, h);
+    table->begin.jmp_oom = arena.jmp_oom;
+    table->end.jmp_oom = arena.jmp_oom;
     
     table->strings = table->begin.beg;
     table->head = NULL;

@@ -103,8 +103,8 @@ enum LiteralType
 	Integer,
 	Boolean,
 	Float,
-	Vector,
-	Animation,
+	// Vector,
+	// Animation,
 	Function,
 	LocalizedString,
 	Undefined

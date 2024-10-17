@@ -385,13 +385,13 @@ static ASTFile *add_file(ASTProgram *program, const char *path)
 		ASTFile *file = calloc(1, sizeof(ASTFile));
 		memset(file, 0, sizeof(ASTFile));
 		snprintf(file->path, sizeof(file->path), "%s", path);
-		for(size_t i = 0; file->path[i]; ++i)
-		{
-			if(file->path[i] == '\\')
-			{
-				file->path[i] = '/';
-			}
-		}
+		// for(size_t i = 0; file->path[i]; ++i)
+		// {
+		// 	if(file->path[i] == '\\')
+		// 	{
+		// 		file->path[i] = '/';
+		// 	}
+		// }
 		hash_table_init(&file->functions, 10, program->allocator); // 1024 function limit for now
 
 		entry = hash_table_insert(&program->files, path);
@@ -419,14 +419,15 @@ static void parse(Parser *parser, ASTProgram *prog, ASTFile *file)
 				if(!strcmp(ident, "include"))
 				{
 					const char *path = string(parser, TK_FILE_REFERENCE);
-					printf("path:%s\n", path);
+					// printf("path:%s\n", path);
 					add_file(prog, path);
 				} else if(!strcmp(ident, "using_animtree"))
 				{
 					advance(parser, '(');
 					const char *tree = string(parser, TK_STRING);
+					snprintf(parser->animtree, sizeof(parser->animtree), "%s", tree);
 					advance(parser, ')');
-					printf("using_animtree tree:%s\n", tree);
+					// printf("using_animtree tree:%s\n", tree);
 				}
 				else
 				{
@@ -505,46 +506,6 @@ static void tokenize(Lexer *lexer)
 	}
 }
 
-static void parse_line(Allocator *allocator, const char *line, ASTProgram *program, ASTFile *file)
-{
-	char string[16384];
-	Stream s = { 0 };
-	StreamBuffer sb = { 0 };
-	init_stream_from_buffer(&s, &sb, (unsigned char*)line, strlen(line) + 1);
-	
-	Lexer l = { 0 };
-	lexer_init(&l, &s);
-	l.flags |= LEXER_FLAG_PRINT_SOURCE_ON_ERROR;
-	// l.flags |= LEXER_FLAG_TOKENIZE_WHITESPACE;
-	jmp_buf jmp;
-	if(setjmp(jmp))
-	{
-		printf("ERROR '%s'\n", file->path);
-		exit(-1);
-	}
-	l.jmp = &jmp;
-	// tokenize(&l);
-	// return 0;
-	Parser parser = { 0 };
-	parser.allocator = allocator;
-	parser.string = string;
-	parser.max_string_length = sizeof(string);
-	parser.lexer = &l;
-
-	// tokenize(parser.lexer);
-	// getchar();
-	lexer_step(parser.lexer, &parser.token);
-	parse(&parser, program, file);
-
-	// HashTableEntry *it = file.ht.head;
-	// while(it)
-	// {
-	// 	// TODO: reverse iteration order
-	// 	visit_node(&visitor, it->value);
-	// 	it = it->next;
-	// }
-}
-
 static bool node_fn(ASTNode *n, void *ctx)
 {
 	if(n->type != AST_FILE_REFERENCE)
@@ -556,10 +517,11 @@ static bool node_fn(ASTNode *n, void *ctx)
 
 static ASTFile *parse_file(Allocator *allocator, const char *filename, ASTProgram *program)
 {
-
 	char path[512];
 	snprintf(path, sizeof(path), "%s%s.gsc", program->base_path, filename);
-	
+	for(char *p = path; *p; p++)
+		*p = *p == '\\' ? '/' : *p;
+
 	ASTFile *file = add_file(program, filename);
 	unsigned char *data = read_text_file(path);
 	if(!data)
@@ -567,27 +529,37 @@ static ASTFile *parse_file(Allocator *allocator, const char *filename, ASTProgra
 		printf("Can't read '%s'\n", filename);
 		return NULL;
 	}
-	program->source = data;
-	parse_line(allocator, data, program, file);
+	file->source = data;
+
+	char string[16384];
+	Stream s = { 0 };
+	StreamBuffer sb = { 0 };
+	init_stream_from_buffer(&s, &sb, (unsigned char*)data, strlen(data) + 1);
+	
+	Lexer l = { 0 };
+	lexer_init(&l, &s);
+	l.flags |= LEXER_FLAG_PRINT_SOURCE_ON_ERROR;
+	// l.flags |= LEXER_FLAG_TOKENIZE_WHITESPACE;
+	jmp_buf jmp;
+	if(setjmp(jmp))
+	{
+		return NULL;
+	}
+	l.jmp = &jmp;
+	Parser parser = { 0 };
+	parser.allocator = allocator;
+	parser.string = string;
+	parser.max_string_length = sizeof(string);
+	parser.lexer = &l;
+
+	lexer_step(parser.lexer, &parser.token);
+	parse(&parser, program, file);
 
 	for(HashTableEntry *it = file->functions.head; it; it = it->next)
 	{
 		ASTFunction *func = it->value;
 		traverse(func, node_fn, program);
 	}
-
-	// Stream s = { 0 };
-	// StreamBuffer sb = { 0 };
-	// init_stream_from_buffer(&s, &sb, data, strlen(data) + 1);
-	// char line[16384];
-	// while(!stream_read_line(&s, line, sizeof(line)))
-	// {
-	// 	parse_line(line);
-	// }
-	// while(fgets(line, sizeof(line), stdin))
-	// {
-    // 	parse_line(line);
-	// }
 	return file;
 }
 
@@ -666,12 +638,13 @@ VMFunction *get_function(CompiledFile *cf, const char *name)
 
 void compile_file(Allocator *allocator, Arena scratch, Compiler *c, ASTFile *file)
 {
+	c->file = file;
 	CompiledFile *cf = calloc(1, sizeof(CompiledFile));
 	hash_table_init(&cf->functions, 16, allocator);
 	for(HashTableEntry *it = file->functions.head; it; it = it->next)
 	{
 		ASTFunction *f = it->value;
-		VMFunction *compfunc = compile_function(c, f, scratch);
+		VMFunction *compfunc = compile_function(c, file, f, scratch);
 		if(!compfunc)
 			continue;
 		// printf("file:%s,instr:%d,name:%s,%d funcs,ast funcs:%d\n",file->path,buf_size(ins),f->name,cf->functions.length,file->functions.length);
@@ -697,9 +670,10 @@ VMFunction *vm_func_lookup(void *ctx, const char *file, const char *function)
 
 int main(int argc, char **argv)
 {
-	size_t cap = (1 << 28);
+	size_t cap = (1 << 29);
 	char *heap = malloc(cap);
 	printf("[INFO] Allocated %.2f MB\n", (float)cap / 1000.f / 1000.f);
+	getchar();
 	Arena perm = { 0 };
 	jmp_buf jmp_;
 	arena_init(&perm, heap, cap);
@@ -711,12 +685,13 @@ int main(int argc, char **argv)
 	perm.jmp_oom = &jmp_;
 
 	Allocator perm_allocator = arena_allocator(&perm);
-
-	Arena scratch = arena_split(&perm, (1 << 16)); // 25MB
+	cap >>= 2;
+	Arena scratch = arena_split(&perm, cap);
 	Allocator scratch_allocator = arena_allocator(&scratch);
 
+	cap >>= 2;
 	StringTable strtab;
-	string_table_init(&strtab, arena_split(&perm, (1 << 16)));
+	string_table_init(&strtab, arena_split(&perm, cap));
 
 	bool verbose = false;
 	char *input_file = NULL;
@@ -741,8 +716,6 @@ int main(int argc, char **argv)
 	hash_table_init(&compiled_files, 12, &perm_allocator);
 	
 	Compiler compiler = { 0 };
-	Arena arena;
-	static char arena_buf[8 * 1000 * 1000];
 	jmp_buf jmp;
 	ASTProgram *program = NULL;
 	ASTFile *file = NULL;
@@ -755,8 +728,7 @@ int main(int argc, char **argv)
 	// hash_table_init(&interp.stringtable, 16);
 	// interp.jmp = &jmp;
 	void ast_visitor_gsc_init(ASTVisitor *v);
-	arena_init(&arena, arena_buf, sizeof(arena_buf));
-	compiler_init(&compiler, &jmp, arena, &perm_allocator, &strtab);
+	compiler_init(&compiler, &jmp, &perm_allocator, &strtab);
 	assert(argc > 1);
 	#ifdef DISK
 	static const char *base_path = "scripts/";
@@ -767,15 +739,17 @@ int main(int argc, char **argv)
 
 	hash_table_init(&program->files, 10, &scratch_allocator);
 	file = parse_file(&scratch_allocator, input_file, program);
-	// for(HashTableEntry *it = program->files.head; it; it = it->next)
-	// {
-	// 	ASTFile *f = it->value;
-	// 	if(f->parsed)
-	// 		continue;
-	// 	parse_file(f->path, program);
-	// }
 
-	compiler.source = program->source;
+	// compiler.source = program->source;
+
+	for(HashTableEntry *it = program->files.head; it; it = it->next)
+	{
+		ASTFile *f = it->value;
+		if(f->parsed)
+			continue;
+		parse_file(&scratch_allocator, f->path, program);
+	}
+	
 	// Compile all functions
 	for(HashTableEntry *it = program->files.head; it; it = it->next)
 	{
@@ -784,8 +758,9 @@ int main(int argc, char **argv)
 			continue;
 		compile_file(&perm_allocator, scratch, &compiler, f);
 		printf("%f MB", get_memory_usage_kb() / 1000.f);
-		getchar();
+		// getchar();
 	}
+	getchar();
 	
 	VM *vm = perm_allocator.malloc(perm_allocator.ctx, sizeof(VM));
 	vm_init(vm, &perm_allocator);

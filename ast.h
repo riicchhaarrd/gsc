@@ -60,6 +60,7 @@ struct ASTFile
 	HashTable functions; // ASTFunction
 	bool parsed;
 	char path[256];
+	char *source;
 };
 
 typedef struct ASTProgram ASTProgram;
@@ -68,5 +69,5 @@ struct ASTProgram
 	Allocator *allocator;
 	HashTable files; // ASTFile
 	char base_path[256];
-	const char *source;
+	// const char *source;
 };

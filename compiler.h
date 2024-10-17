@@ -12,7 +12,8 @@ typedef struct
 {
 	Node *continue_list;
 	Node *break_list;
-	Arena arena;
+	// Arena arena;
+	ASTNode *node;
 } Scope;
 
 #define COMPILER_MAX_SCOPES (32)
@@ -26,20 +27,23 @@ typedef struct
 
     Instruction *instructions;
     // FILE *out;
+
+	ASTFile *file;
 	
-	Arena arena;
+	Arena *arena;
 	StringTable *strings;
 
 	Scope scopes[COMPILER_MAX_SCOPES];
 	size_t current_scope;
 
 	// Makes debugging easier, set source if we still have source available and node to the statement for line number information
-	const char *source;
+	// const char *source;
 	ASTNode *node;
 	int line_number;
+	char string[2048];
 } Compiler;
 
 void dump_instructions(Compiler *c, Instruction *instructions);
-VMFunction *compile_function(Compiler *c, ASTFunction *func, Arena arena);
-void compiler_init(Compiler *c, jmp_buf *jmp, Arena arena, Allocator*, StringTable*);
+VMFunction *compile_function(Compiler *c, ASTFile*, ASTFunction *func, Arena arena);
+void compiler_init(Compiler *c, jmp_buf *jmp, Allocator*, StringTable*);
 void compiler_free(Compiler *);

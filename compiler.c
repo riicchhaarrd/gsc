@@ -2,10 +2,11 @@
 #include "lexer.h"
 #include <setjmp.h>
 #include "compiler.h"
+#include "variable.h"
 
 static Node *node(Compiler *c, Node **list)
 {
-	Node *n = new(&c->arena, Node, 1);
+	Node *n = new(c->arena, Node, 1);
 	n->next = *list; // Prepending, so it's actually previous
 	*list = n;
 	return n;
@@ -16,14 +17,45 @@ static Scope *current_scope(Compiler *c)
 	return &c->scopes[c->current_scope];
 }
 
+static Scope *previous_scope(Compiler *c)
+{
+	if(c->current_scope == 0 || c->current_scope >= COMPILER_MAX_SCOPES)
+		return NULL;
+	return &c->scopes[c->current_scope - 1];
+}
+
+#include <core/io/stream.h>
+#include <core/io/stream_buffer.h>
+
+static void print_source(Compiler *c, int offset, int range_min, int range_max)
+{
+	if(!c->file->source || !c->node)
+		return;
+	Stream s = { 0 };
+	StreamBuffer sb = { 0 };
+	init_stream_from_buffer(&s, &sb, c->file->source, strlen(c->file->source) + 1);
+	Stream *ls = &s;
+	ls->seek(ls, offset + range_min, SEEK_SET);
+	size_t n = range_max - range_min;
+	for(int i = 0; i < n; ++i)
+	{
+		char ch;
+		if(0 == ls->read(ls, &ch, 1, 1) || !ch)
+			break;
+		if(ls->tell(ls) == offset)
+			putc('*', stdout);
+		putc(ch, stdout);
+	}
+}
+
 static int lineno(Compiler *c)
 {
-	if(!c->source || !c->node)
+	if(!c->file->source || !c->node)
 		return -1;
 	size_t n = 1;
-	for(size_t i = 0; i < c->node->offset && c->source[i]; ++i)
+	for(size_t i = 0; i < c->node->offset && c->file->source[i]; ++i)
 	{
-		if(c->source[i] == '\n')
+		if(c->file->source[i] == '\n')
 			++n;
 	}
 	return n;
@@ -40,6 +72,19 @@ static void debug_info_node(Compiler *c, ASTNode *n)
 	c->line_number = lineno(c);
 }
 
+static void strtolower(char *str)
+{
+	for(char *p = str; *p; ++p)
+		*p = tolower(*p);
+}
+
+static const char *lowercase(Compiler *c, const char *s)
+{
+	snprintf(c->string, sizeof(c->string), "%s", s);
+	strtolower(c->string);
+	return c->string;
+}
+
 static void error(Compiler *c, const char *fmt, ...)
 {
 	char message[2048];
@@ -47,8 +92,10 @@ static void error(Compiler *c, const char *fmt, ...)
 	va_start(va, fmt);
 	vsnprintf(message, sizeof(message), fmt, va);
 	va_end(va);
-	printf("[COMPILER] ERROR: %s at line %d\n", message, lineno(c));
-	// abort();
+	if(c->node)
+		print_source(c, c->node->offset, -100, 100);
+	printf("[COMPILER] ERROR: %s at line %d '%s'\n", message, lineno(c), c->file->path);
+	abort();
 	if(c->jmp)
 		longjmp(*c->jmp, 1);
 }
@@ -125,7 +172,7 @@ static void patch_reljmp(Compiler *c, size_t ins)
 	c->instructions[ins].operands[0] = integer(destination - current - 1);
 }
 
-static void increment_scope(Compiler *c)
+static void increment_scope(Compiler *c, ASTNode *node, Node *prev_continue_list)
 {
 	if(c->current_scope >= COMPILER_MAX_SCOPES)
 	{
@@ -133,9 +180,10 @@ static void increment_scope(Compiler *c)
 	}
 	c->current_scope++;
 	Scope *scope = current_scope(c);
-	scope->arena = c->arena;
+	scope->node = node;
+	// scope->arena = c->arena;
 	scope->break_list = NULL;
-	scope->continue_list = NULL;
+	scope->continue_list = prev_continue_list ? prev_continue_list : NULL;
 }
 
 static void decrement_scope(Compiler *c, int continue_offset, int break_offset)
@@ -151,15 +199,27 @@ static void decrement_scope(Compiler *c, int continue_offset, int break_offset)
 
 		ins->operands[0] = integer(break_offset - *offset - 1);
 	}
-
-	LIST_FOREACH(Node, scope->continue_list, it)
+	if(continue_offset != -1)
 	{
-		size_t *offset = it->data;
-		Instruction *ins = &c->instructions[*offset];
+		LIST_FOREACH(Node, scope->continue_list, it)
+		{
+			size_t *offset = it->data;
+			Instruction *ins = &c->instructions[*offset];
 
-		ins->operands[0] = integer(continue_offset - *offset - 1);
+			ins->operands[0] = integer(continue_offset - *offset - 1);
+		}
+	} else
+	{
+		Scope *prev_scope = previous_scope(c);
+		if(prev_scope)
+		{
+			prev_scope->continue_list = scope->continue_list;
+		}
+		else
+		{
+			error(c, "continue cannot be used in this context");
+		}
 	}
-
 	if(c->current_scope-- <= 0)
 	{
 		error(c, "Scope error");
@@ -238,17 +298,11 @@ static void visit_ASTFileReference_(Compiler *c, ASTFileReference *n)
 		  "ASTFileReference"
 		  " unimplemented");
 }
-static void visit_ASTVectorExpr_(Compiler *c, ASTVectorExpr *n)
-{
-	// error(c,
-	// 	  "ASTVectorExpr"
-	// 	  " unimplemented");
-}
 static void visit_ASTBreakStmt_(Compiler *c, ASTBreakStmt *n)
 {
 	Scope *scope = current_scope(c);
 	Node *break_entry = node(c, &scope->break_list);
-	size_t *jmp = new(&c->arena, size_t, 1);
+	size_t *jmp = new(c->arena, size_t, 1);
 	*jmp = emit(c, OP_JMP);
 	break_entry->data = jmp;
 }
@@ -256,7 +310,7 @@ static void visit_ASTContinueStmt_(Compiler *c, ASTContinueStmt *n)
 {
 	Scope *scope = current_scope(c);
 	Node *continue_entry = node(c, &scope->continue_list);
-	size_t *jmp = new(&c->arena, size_t, 1);
+	size_t *jmp = new(c->arena, size_t, 1);
 	*jmp = emit(c, OP_JMP);
 	continue_entry->data = jmp;
 }
@@ -272,12 +326,6 @@ static void visit_ASTSwitchCase_(Compiler *c, ASTSwitchCase *n)
 		  "ASTSwitchCase"
 		  " unimplemented");
 }
-static void visit_ASTSwitchStmt_(Compiler *c, ASTSwitchStmt *n)
-{
-	// error(c,
-	// 	  "ASTSwitchStmt"
-	// 	  " unimplemented");
-}
 static void visit_ASTWaitTillFrameEndStmt_(Compiler *c, ASTWaitTillFrameEndStmt *n)
 {
 	error(c,
@@ -292,7 +340,13 @@ IMPL_VISIT(ASTFunctionPointerExpr)
 
 IMPL_VISIT(ASTWaitStmt)
 {
-	visit(n->duration);
+	if(!n->duration)
+	{
+		emit(c, OP_UNDEF);
+	} else
+	{
+		visit(n->duration);	
+	}
 	emit(c, OP_WAIT);
 }
 
@@ -319,7 +373,7 @@ IMPL_VISIT(ASTReturnStmt)
 
 IMPL_VISIT(ASTWhileStmt)
 {
-	increment_scope(c);
+	increment_scope(c, n, NULL);
 	int loop_begin = ip(c);
 	if(n->test)
 	{
@@ -346,17 +400,11 @@ IMPL_VISIT(ASTWhileStmt)
 
 IMPL_VISIT(ASTLiteral)
 {
-	// static const char *_[] = {
-
-	// 	"STRING", "INTEGER", "BOOLEAN", "FLOAT", "VECTOR", "ANIMATION", "FUNCTION", "LOCALIZED_STRING", "UNDEFINED"
-	// };
-
 	size_t instr_idx = emit(c, OP_PUSH);
 	Instruction *instr = &c->instructions[instr_idx];
 	instr->operands[0] = integer(n->type);
 	switch(n->type)
 	{
-		case AST_LITERAL_TYPE_ANIMATION:
 		case AST_LITERAL_TYPE_LOCALIZED_STRING:
 		case AST_LITERAL_TYPE_STRING:
 		{
@@ -404,6 +452,14 @@ IMPL_VISIT(ASTLiteral)
 		break;
 	}
 }
+IMPL_VISIT(ASTVectorExpr)
+{
+	for(size_t i = 0; i < n->numelements; ++i)
+	{
+		visit(n->elements[i]);
+	}
+	emit1(c, OP_VECTOR, integer(n->numelements));
+}
 
 IMPL_VISIT(ASTIfStmt)
 {
@@ -424,8 +480,35 @@ IMPL_VISIT(ASTIfStmt)
 	}
 }
 
-static void property(Compiler *c, ASTNode *n)
+static bool is_expr(ASTNode *n)
 {
+	switch(n->type)
+	{
+		case AST_FUNCTION_POINTER_EXPR:
+		case AST_ARRAY_EXPR:
+		case AST_GROUP_EXPR:
+		case AST_ASSIGNMENT_EXPR:
+		case AST_BINARY_EXPR:
+		case AST_CALL_EXPR:
+		case AST_CONDITIONAL_EXPR:
+		case AST_IDENTIFIER:
+		case AST_LITERAL:
+		case AST_MEMBER_EXPR:
+		case AST_UNARY_EXPR:
+		case AST_VECTOR_EXPR: return true;
+	}
+	return false;
+}
+
+static void property(Compiler *c, ASTNode *n, int op)
+{
+	if(op == '[')
+	{
+		if(!is_expr(n))
+			error(c, "Invalid node %s for property", ast_node_names[n->type]);
+		visit(n);
+		return;
+	}
 	switch(n->type)
 	{
 		case AST_IDENTIFIER:
@@ -437,7 +520,7 @@ static void property(Compiler *c, ASTNode *n)
 		{
 			visit(n->ast_member_expr_data.object);
 			// lvalue(c, n->ast_member_expr_data.object);
-			property(c, n->ast_member_expr_data.prop);
+			property(c, n->ast_member_expr_data.prop, n->ast_member_expr_data.op);
 			emit(c, OP_LOAD_FIELD);
 		}
 		break;
@@ -451,11 +534,11 @@ static void property(Compiler *c, ASTNode *n)
 					emit4(c, OP_PUSH, integer(lit->type), string(c, lit->value.string), NONE, NONE);
 				}
 				break;
-				case AST_LITERAL_TYPE_INTEGER:
-				{
-					emit4(c, OP_PUSH, integer(lit->type), integer(lit->value.integer), NONE, NONE);
-				}
-				break;
+				// case AST_LITERAL_TYPE_INTEGER:
+				// {
+				// 	emit4(c, OP_PUSH, integer(lit->type), integer(lit->value.integer), NONE, NONE);
+				// }
+				// break;
 				default:
 				{
 					error(c, "Invalid literal %d for for property", lit->type);
@@ -474,16 +557,16 @@ static void property(Compiler *c, ASTNode *n)
 
 static int define_local_variable(Compiler *c, const char *name, bool is_parm)
 {
-	Allocator allocator = arena_allocator(&c->arena);
+	Allocator allocator = arena_allocator(c->arena);
 	HashTrieNode *entry =
-		hash_trie_upsert(&c->variables, name, &allocator); // This is OK, Hash Trie doesn't store the allocator
+		hash_trie_upsert(&c->variables, lowercase(c, name), &allocator); // This is OK, Hash Trie doesn't store the allocator
 	if(entry->value)
 	{
 		if(is_parm)
 			error(c, "Parameter '%s' already defined", name);
 		return *(int *)entry->value;
 	}
-	entry->value = new(&c->arena, int, 1);
+	entry->value = new(c->arena, int, 1);
 	*(int *)entry->value = c->variable_index++;
 	return c->variable_index - 1;
 }
@@ -492,22 +575,18 @@ static void lvalue(Compiler *c, ASTNode *n)
 {
 	switch(n->type)
 	{
-		// TODO: handle level, self, game[""] ...
 		case AST_IDENTIFIER:
 		{
-			if(!strcmp(n->ast_identifier_data.name, "level"))
+			int glob_idx = -1;
+			for(size_t i = 0; variable_globals[i]; ++i)
 			{
-				emit1(c, OP_LEVEL, integer(1));
+				if(!strcmp(n->ast_identifier_data.name, variable_globals[i]))
+				{
+					glob_idx = i;
+					emit2(c, OP_GLOB, integer(i), integer(1));
+				}
 			}
-			else if(!strcmp(n->ast_identifier_data.name, "self"))
-			{
-				emit1(c, OP_SELF, integer(1));
-			}
-			else if(!strcmp(n->ast_identifier_data.name, "game"))
-			{
-				emit1(c, OP_GAME, integer(1));
-			}
-			else
+			if(glob_idx == -1)
 			{
 				int idx = define_local_variable(c, n->ast_identifier_data.name, false);
 				emit4(c, OP_REF, integer(idx), NONE, NONE, NONE);
@@ -517,7 +596,7 @@ static void lvalue(Compiler *c, ASTNode *n)
 		case AST_MEMBER_EXPR:
 		{
 			lvalue(c, n->ast_member_expr_data.object);
-			property(c, n->ast_member_expr_data.prop);
+			property(c, n->ast_member_expr_data.prop, n->ast_member_expr_data.op);
 			emit(c, OP_FIELD_REF);
 		}
 		break;
@@ -530,6 +609,66 @@ static void lvalue(Compiler *c, ASTNode *n)
 	}
 }
 
+IMPL_VISIT(ASTSwitchStmt)
+{
+	Scope *prev_scope = previous_scope(c);
+	increment_scope(c, n, prev_scope ? prev_scope->continue_list : NULL);
+
+	ASTSwitchCase *default_case = NULL;
+	size_t case_jnz[256]; // TODO: increase limit
+	size_t numcases = 0;
+
+	for(ASTSwitchCase *it = n->cases; it; it = ((ASTNode*)it)->next)
+    {
+		if(((ASTNode *)it)->type != AST_SWITCH_CASE)
+			error(c, "Expected case got '%s'", ast_node_names[((ASTNode *)it)->type]);
+
+		if(!it->test)
+		{
+			default_case = it;
+			continue;
+		}
+		
+		visit(n->discriminant);
+		visit(it->test);
+		emit4(c, OP_BINOP, integer(TK_EQUAL), NONE, NONE, NONE);
+		emit(c, OP_TEST);
+		size_t jnz = emit(c, OP_JNZ);
+		if(numcases >= 256)
+			error(c, "Maximum amount of cases is 256");
+		case_jnz[numcases++] = jnz;
+	}
+	int jmp_default = -1;
+	if(default_case)
+	{
+		jmp_default = emit(c, OP_JMP);
+	}
+	
+	numcases = 0;
+
+	for(ASTSwitchCase *it = n->cases; it; it = ((ASTNode*)it)->next)
+    {
+		if(!it->test)
+		{
+			continue;
+		}
+		patch_reljmp(c, case_jnz[numcases++]);
+		for(ASTNode *consequent = it->consequent; consequent; consequent = consequent->next)
+		{
+			visit(consequent);
+		}
+	}
+	if(default_case)
+	{
+		patch_reljmp(c, jmp_default);
+		for(ASTNode *consequent = default_case->consequent; consequent; consequent = consequent->next)
+		{
+			visit(consequent);
+		}
+	}
+	decrement_scope(c, -1, ip(c));
+}
+
 IMPL_VISIT(ASTForStmt)
 {
 	if(n->init)
@@ -537,7 +676,7 @@ IMPL_VISIT(ASTForStmt)
 		visit(n->init);
 		emit(c, OP_POP);
 	}
-	increment_scope(c);
+	increment_scope(c, n, NULL);
 	int loop_begin = ip(c);
 	if(n->test)
 	{
@@ -617,26 +756,24 @@ IMPL_VISIT(ASTUnaryExpr)
 IMPL_VISIT(ASTMemberExpr)
 {
 	visit(n->object);
-	property(c, n->prop);
+	property(c, n->prop, n->op);
 	emit(c, OP_LOAD_FIELD);
 }
+
 IMPL_VISIT(ASTIdentifier)
 {
-	if(!strcmp(n->name, "level"))
+	int glob_idx = -1;
+	for(size_t i = 0; variable_globals[i]; ++i)
 	{
-		emit(c, OP_LEVEL);
+		if(!strcmp(n->name, variable_globals[i]))
+		{
+			glob_idx = i;
+			emit2(c, OP_GLOB, integer(i), integer(0));
+		}
 	}
-	else if(!strcmp(n->name, "self"))
+	if(glob_idx == -1)
 	{
-		emit(c, OP_SELF);
-	}
-	else if(!strcmp(n->name, "game"))
-	{
-		emit(c, OP_GAME);
-	}
-	else
-	{
-		HashTrieNode *entry = hash_trie_upsert(&c->variables, n->name, NULL);
+		HashTrieNode *entry = hash_trie_upsert(&c->variables, lowercase(c, n->name), NULL);
 		if(!entry)
 		{
 			error(c, "No variable '%s'", n->name);
@@ -684,7 +821,7 @@ IMPL_VISIT(ASTCallExpr)
 	}
 	for(size_t i = 0; i < n->numarguments; ++i)
 	{
-		if(pass_args_as_ref && i > 0)
+		if(pass_args_as_ref && n->numarguments - 1 != i)
 		{
 			lvalue(c, n->arguments[n->numarguments - i - 1]);
 		} else
@@ -700,8 +837,8 @@ IMPL_VISIT(ASTCallExpr)
 	emit2(c, OP_PUSH, integer(AST_LITERAL_TYPE_INTEGER), integer(n->numarguments));
 	if(n->object)
 	{
-		// visit(n->object);
-		lvalue(c, n->object);
+		visit(n->object);
+		// lvalue(c, n->object);
 	}
 	callee(c, n->callee, call_flags, n->numarguments);
 }
@@ -722,14 +859,11 @@ IMPL_VISIT(ASTBlockStmt)
 	}
 }
 
-void compiler_init(Compiler *c, jmp_buf *jmp, Arena arena, Allocator *allocator, StringTable *strtab)
+void compiler_init(Compiler *c, jmp_buf *jmp, Allocator *allocator, StringTable *strtab)
 {
 	// c->out = fopen("compiled.gasm", "w");
-	c->variable_index = 0;
-	hash_trie_init(&c->variables);
 	
 	c->strings = strtab;
-	c->arena = arena;
 
 	c->jmp = jmp;
 }
@@ -778,23 +912,25 @@ IMPL_VISIT(ASTFunction)
 
 #include "vm.h"
 
-VMFunction *compile_function(Compiler *c, ASTFunction *n, Arena arena)
+VMFunction *compile_function(Compiler *c, ASTFile *file, ASTFunction *n, Arena arena)
 {
 	VMFunction *vmf = malloc(sizeof(VMFunction));
 	jmp_buf *prev = c->jmp;
 	jmp_buf jmp;
 	if(setjmp(jmp))
 	{
-		buf_free(c->instructions);
-		free(vmf);
+		// buf_free(c->instructions);
+		// free(vmf);
 		if(prev)
 			longjmp(*prev, 1);
 		return NULL;
 	}
-	c->arena = arena;
+	c->arena = &arena;
+	c->variable_index = 0;
+	hash_trie_init(&c->variables);
 	c->instructions = NULL;
 	c->jmp = &jmp;
-	c->variable_index = 0;
+	c->current_scope = 0;
 	vmf->parameter_count = n->parameter_count;
 	debug_info_node(c, n);
 	for(ASTNode *it = n->parameters; it; it = it->next)
@@ -810,5 +946,6 @@ VMFunction *compile_function(Compiler *c, ASTFunction *n, Arena arena)
 
 	vmf->instructions = c->instructions;
 	c->instructions = NULL;
+	c->arena = NULL;
 	return vmf;
 }

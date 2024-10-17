@@ -10,6 +10,7 @@ typedef struct
 	char *string;
 	size_t max_string_length;
 	Allocator *allocator;
+	char animtree[256];
 } Parser;
 
 typedef struct ASTNode ASTNode;
