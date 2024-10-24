@@ -226,6 +226,7 @@ ASTNode *nud_literal(Parser *parser, Token *t)
 
 		case TK_TRUE: return boolean(parser, true); break;
 		case TK_FALSE: return boolean(parser, false); break;
+		case TK_NULL:
 		case TK_UNDEFINED: return undefined(parser); break;
 
 		case TK_INTEGER:
@@ -356,6 +357,27 @@ ASTNode *led_function(Parser *parser, ASTNode *left, Token *token, int bp)
 	return call_expression(parser, left);
 }
 
+// They're basically the same JS objects
+// Lua's equivalent are tables
+// Struct because C/C++
+// This is just a shorthand for spawnstruct
+
+ASTNode *nud_struct(Parser *parser, Token *token)
+{
+	NODE(StructExpr, n);
+	n->numelements = 0;
+	// TODO: handle
+	// a = {}
+	// a = {x=1,y=2}
+	// a = {x:1,y:2}
+	// a = {"x":1,"y":2}
+	if(parser->token.type == '}')
+	{
+		advance(parser, '}');
+	}
+	return n;
+}
+
 ASTNode *nud_array(Parser *parser, Token *token)
 {
 	if(parser->token.type == '[')
@@ -462,6 +484,7 @@ static const Operator operator_table[TK_MAX] = {
 	// [TK_INCREMENT] = { 1, LEFT_ASSOC, NULL, NULL },		// Postfix
 	// [TK_DECREMENT] = { 1, LEFT_ASSOC, NULL, NULL },		// Postfix
 	['['] = { 80, LEFT_ASSOC, nud_array, led_bracket },
+	['{'] = { 80, LEFT_ASSOC, nud_struct, NULL },
 	// [']'] = { 80, LEFT_ASSOC, NULL, NULL },
 	['.'] = { 80, LEFT_ASSOC, NULL, led_member },
 	[TK_INCREMENT] = { 80, LEFT_ASSOC, NULL, led_unary },
@@ -478,6 +501,7 @@ static const Operator operator_table[TK_MAX] = {
 	[TK_THREAD] = { 80, LEFT_ASSOC, nud_thread_call, led_thread_member_call },
 	[TK_SCOPE_RESOLUTION] = { 0, LEFT_ASSOC, nud_literal, NULL },
 	[TK_UNDEFINED] = { 0, LEFT_ASSOC, nud_literal, NULL },
+	[TK_NULL] = { 0, LEFT_ASSOC, nud_literal, NULL },
 };
 
 ASTNode *nud_unary(Parser *parser, Token *token)

@@ -25,6 +25,9 @@
 	X(TRUE, CT_HASH(true, 0x4db211e5))           \
 	X(FALSE, CT_HASH(false, 0xb069958))          \
 	X(UNDEFINED, CT_HASH(undefined, 0x9b61ad43)) \
+	X(NULL, CT_HASH(null, 0x77074ba4))           \
+	X(IN, CT_HASH(in, 0x41387a9e))               \
+	X(FOREACH, CT_HASH(foreach, 0xb75f8759))     \
 	X(THREAD, CT_HASH(thread, 0xa2026671))       \
 	X(WAIT, CT_HASH(wait, 0x892e4ca0))           \
 	X(SELF, CT_HASH(self, 0x645ba277))           \
