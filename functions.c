@@ -1,4 +1,5 @@
 #include "vm.h"
+#include <math.h>
 
 static int setexpfog(VM *vm)
 {
@@ -87,6 +88,49 @@ static int println(VM *vm)
 	}
 	putchar('\n');
 	return 0;
+}
+
+// TODO: check bounds
+
+static int substr(VM *vm)
+{
+	const char *str = vm_checkstring(vm, 0);
+	int offset = vm_checkinteger(vm, 1);
+	if(vm_argc(vm) > 2)
+	{
+		int n = vm_checkinteger(vm, 2);
+    	vm_pushstring_n(vm, str + offset, n);
+	} else
+	{
+		vm_pushstring(vm, str + offset);
+	}
+	return 1;
+}
+
+static int byteat(VM *vm)
+{
+	const char *str = vm_checkstring(vm, 0);
+	int offset = vm_checkinteger(vm, 1);
+	size_t n = strlen(str);
+	if(n > 0)
+		vm_pushinteger(vm, str[offset % n]);
+	else
+		vm_pushinteger(vm, 0);
+	return 1;
+}
+
+static int float_(VM *vm)
+{
+	const char *str = vm_checkstring(vm, 0);
+	vm_pushfloat(vm, atof(str));
+	return 1;
+}
+
+static int int_(VM *vm)
+{
+	const char *str = vm_checkstring(vm, 0);
+	vm_pushinteger(vm, atoi(str));
+	return 1;
 }
 
 static int spawnstruct(VM *vm)
@@ -229,6 +273,42 @@ static int vectortoangles(VM *vm)
 	return 1;
 }
 
+static int vec3_(VM *vm)
+{
+	float v[3] = { 0.f, 0.f, 0.f };
+	size_t n = vm_argc(vm);
+	switch(n)
+	{
+		case 0: break;
+		case 2: vm_error(vm, "Please use either 0, 1 or 3 initializers"); break;
+		case 1:
+		{
+			float f = vm_checkfloat(vm, 0);
+			for(size_t i = 0; i < 3; ++i)
+			{
+				v[i] = f;
+			}
+		}
+		break;
+		// case 2:
+		// {
+		// 	v[0] = vm_checkfloat(vm, 0);
+		// 	v[1] = vm_checkfloat(vm, 1);
+		// }
+		// break;
+		default:
+		{
+			for(size_t i = 0; i < vm_argc(vm); ++i)
+			{
+				v[i] = vm_checkfloat(vm, i);
+			}
+		}
+		break;
+	}
+	vm_pushvector(vm, v);
+	return 1;
+}
+
 static int anglestoforward(VM *vm)
 {
 	float v[3];
@@ -278,6 +358,10 @@ void register_c_functions(VM *vm)
 	vm_register_c_function(vm, "dump", dump);
 	vm_register_c_function(vm, "spawnstruct", spawnstruct);
 	vm_register_c_function(vm, "getentarray", spawnstruct);
+	vm_register_c_function(vm, "substr", substr);
+	vm_register_c_function(vm, "byteat", byteat);
+	vm_register_c_function(vm, "int", int_);
+	vm_register_c_function(vm, "float", float_);
 	vm_register_c_function(vm, "spawn", spawn);
 	vm_register_c_method(vm, "endon", endon);
 	vm_register_c_method(vm, "waittill", waittill);
@@ -287,6 +371,7 @@ void register_c_functions(VM *vm)
 	vm_register_c_function(vm, "vectornormalize", vectornormalize);
 	vm_register_c_function(vm, "vectorscale", vectorscale);
 	vm_register_c_function(vm, "vectortoangles", vectortoangles);
+	vm_register_c_function(vm, "vec3", vec3_);
 	vm_register_c_function(vm, "anglestoforward", anglestoforward);
 	vm_register_c_function(vm, "assertex", dummy_0);
 	vm_register_c_function(vm, "precachemodel", dummy_0);
