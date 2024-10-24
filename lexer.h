@@ -502,6 +502,7 @@ repeat:
 				lexer_unget(lexer, NULL);
 				if(ch >= '0' && ch <= '9')
 				{
+					lexer_unget(lexer, t);
 					lexer_parse_characters(lexer, t, TK_NUMBER, cond_numeric_);
 				}
 			}
