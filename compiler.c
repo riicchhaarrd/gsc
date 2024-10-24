@@ -251,6 +251,19 @@ static void callee(Compiler *c, ASTNode *n, int call_flags, int numarguments)
 {
 	switch(n->type)
 	{
+		// Enables object.callback() instead of [[ object.callback ]]()
+		// Force to call as method, since object object.callback() isn't valid
+		case AST_MEMBER_EXPR:
+		{
+			// visit(n->ast_member_expr_data.object); // Moved to ASTCallExpr
+			// call_flags |= VM_CALL_FLAG_METHOD;
+			
+			property(c, n->ast_member_expr_data.prop, n->ast_member_expr_data.op);
+			visit(n->ast_member_expr_data.object);
+			emit(c, OP_LOAD_FIELD);
+			emit4(c, OP_CALL_PTR, NONE, NONE, integer(numarguments), integer(call_flags));
+		}
+		break;
 		case AST_IDENTIFIER:
 		{
 			emit4(c, OP_CALL, string(c, n->ast_identifier_data.name), NONE, integer(numarguments), integer(call_flags));
