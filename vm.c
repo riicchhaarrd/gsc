@@ -1048,22 +1048,12 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 			bool as_ref = read_int(vm, ins, 1) > 0;
 			if(idx < 0 || idx >= VAR_GLOB_MAX)
 				vm_error(vm, "Invalid index for global");
-			if(idx == VAR_GLOB_SELF)
-			{
-				if(as_ref)
-					push(vm, ref(vm, &sf->self));
-				else
-					push(vm, sf->self);
-			}
-			else
-			{
-				Variable *glob = &vm->globals[idx];
+			Variable *glob = &vm->globals[idx];
 
-				if(as_ref)
-					push(vm, ref(vm, glob));
-				else
-					push(vm, *glob);
-			}
+			if(as_ref)
+				push(vm, ref(vm, glob));
+			else
+				push(vm, *glob);
 			ASSERT_STACK(1);
 		}
 		break;
@@ -1397,13 +1387,13 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 					file = read_string(vm, ins, 1);
 			}
 			int call_flags = read_int(vm, ins, 3);
-			Object *object = NULL;
+			// Object *object = NULL;
 			if(call_flags & VM_CALL_FLAG_METHOD)
 			{
-				Variable ov = pop(vm);
-				if(ov.type != VAR_OBJECT)
-					vm_error(vm, "'%s' is not a object", variable_type_names[ov.type]);
-				object = object_for_var(&ov);
+				// Variable ov = pop(vm);
+				// if(ov.type != VAR_OBJECT)
+				// 	vm_error(vm, "'%s' is not a object", variable_type_names[ov.type]);
+				// object = object_for_var(&ov);
 				// object = pop_ref(vm);
 			}
             int nargs = cast_int(vm, top(vm, 0));
@@ -1417,14 +1407,14 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 				nt->state = VM_THREAD_ACTIVE;
 				pop_thread(vm, thr); //nargs
 				
-				for(size_t k = 0; k < nargs; ++k)
+				for(size_t k = 0; k < nargs + 1; ++k)
 				{
 					Variable arg = pop_thread(vm, thr);
 					push_thread(vm, nt, arg);
 				}
 				push_thread(vm, thr, undef); // return value for caller thread
 				push_thread(vm, nt, integer(vm, nargs));
-				call_function(vm, nt, file ? file : sf->file, function, nargs, object, true);
+				call_function(vm, nt, file ? file : sf->file, function, nargs, true, call_flags);
 				nt->caller.file = sf->file;
 				nt->caller.function = sf->function;
 				add_thread(vm, nt);
@@ -1435,7 +1425,7 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 			{
 				if(++thr->bp >= VM_FRAME_SIZE)
 					vm_error(vm, "thr->bp >= VM_FRAME_SIZE");
-				if(!call_function(vm, thr, file ? file : sf->file, function, nargs, object, false))
+				if(!call_function(vm, thr, file ? file : sf->file, function, nargs, false, call_flags))
 					thr->bp--;
 			}
 			// ASSERT_STACK(-nargs);
@@ -1631,11 +1621,11 @@ static vm_CMethod get_c_method(VM *vm, const char *name)
 // 	return true;
 // }
 
-Variable *vm_argv(VM *vm, size_t idx)
+Variable *vm_argv(VM *vm, int idx)
 {
 	Thread *thr = vm->thread;
 	int nargs = cast_int(vm, top(vm, 0));
-	return &thr->stack[thr->sp - 2 - idx];
+	return &thr->stack[thr->sp - 3 - idx];
 	// return thr->stack[thr->sp - nargs - 1 + idx];
 }
 
@@ -1765,11 +1755,15 @@ void vm_pushundefined(VM *vm)
 }
 
 // TODO: make use of namespace
-static void call_c_function(VM *vm, const char *namespace, const char *function, size_t nargs, Object *self)
+static void call_c_function(VM *vm, const char *namespace, const char *function, size_t nargs, int call_flags)
 {
+	if(call_flags & VM_CALL_FLAG_THREADED)
+	{
+		vm_error(vm, "Can't call builtin functions threaded");
+	}
 	Arena rollback = vm->c_function_arena;
 	int nret;
-	if(!self)
+	if(!(call_flags & VM_CALL_FLAG_METHOD))
 	{
 		vm_CFunction cfunc = get_c_function(vm, function);
 		if(!cfunc)
@@ -1785,11 +1779,12 @@ static void call_c_function(VM *vm, const char *namespace, const char *function,
 		{
 			vm_error(vm, "No builtin method '%s'", function);
 		}
-		if(!self)
+		Variable *self = vm_argv(vm, -1);
+		if(self->type != VAR_OBJECT)
 		{
 			vm_error(vm, "not a object");
 		}
-		nret = cmethod(vm, object_for_var(&self));
+		nret = cmethod(vm, object_for_var(self));
 	}
 	if(nret == 0)
 	{
@@ -1798,7 +1793,7 @@ static void call_c_function(VM *vm, const char *namespace, const char *function,
 	Variable ret = pop(vm);
 
 	// Pop all args
-	for(size_t i = 0; i < nargs + 1; ++i)
+	for(size_t i = 0; i < nargs + 2; ++i)
 	{
 		Variable arg = pop(vm);
 		// decref(vm, &arg);
@@ -1810,19 +1805,19 @@ static void call_c_function(VM *vm, const char *namespace, const char *function,
 	vm->c_function_arena = rollback;
 }
 
-static bool call_function(VM *vm, Thread *thr, const char *file, const char *function, size_t nargs, Object *self, bool reversed)
+static bool call_function(VM *vm, Thread *thr, const char *file, const char *function, size_t nargs, bool reversed, int call_flags)
 {
 	VMFunction *vmf = vm->func_lookup(vm->ctx, file, function);
     if(!vmf)
     {
-		call_c_function(vm, file, function, nargs, self);
+		call_c_function(vm, file, function, nargs, call_flags);
         return false;
 	}
-	Object *prev_self = object_for_var(&vm->globals[VAR_GLOB_LEVEL]);
-	if(thr->bp != 0)
-	{
-		prev_self = object_for_var(&thr->frames[thr->bp - 1].self);
-	}
+	// Object *prev_self = object_for_var(&vm->globals[VAR_GLOB_LEVEL]);
+	// if(thr->bp != 0)
+	// {
+	// 	prev_self = object_for_var(&thr->frames[thr->bp - 1].self);
+	// }
 	// if(thr->bp >= VM_FRAME_SIZE)
 	// 	vm_error(vm, "thr->bp >= VM_FRAME_SIZE");
 	// thr->frame = &thr->frames[thr->bp++];
@@ -1830,7 +1825,7 @@ static bool call_function(VM *vm, Thread *thr, const char *file, const char *fun
 	StackFrame *sf = stack_frame(vm, thr);
 	// memset(sf, 0, sizeof(StackFrame));
 	sf->locals = NULL;
-	sf->self.u.oval = self ? self : prev_self;
+	// sf->self.u.oval = self ? self : prev_self;
 	// sf->local_count = vmf->local_count;
 	// sf->locals = new(&vm->arena, Variable, vmf->local_count);
 	for(size_t i = 0; i < vmf->local_count; ++i)
@@ -1840,6 +1835,7 @@ static bool call_function(VM *vm, Thread *thr, const char *file, const char *fun
 		sf->locals[i].u.ival = 0;
 	}
 	pop_thread(vm, thr); //nargs
+	sf->locals[0] = pop_thread(vm, thr);
 	for(size_t i = 0; i < nargs; ++i)
 	{
 		Variable arg = pop_thread(vm, thr);
@@ -1847,7 +1843,7 @@ static bool call_function(VM *vm, Thread *thr, const char *file, const char *fun
 		if(i < vmf->parameter_count)
 		{
 			size_t local_idx = reversed ? nargs - i - 1 : i;
-			sf->locals[local_idx] = arg;
+			sf->locals[local_idx + 1] = arg;
 		}
 	}
 	sf->file = file;
@@ -1870,10 +1866,11 @@ void vm_call_function_thread(VM *vm, const char *file, const char *function, siz
 	memset(vm->thread, 0, sizeof(Thread));
 	vm->thread->bp = 0;
 	vm->thread->state = VM_THREAD_ACTIVE;
+	push_thread(vm, vm->thread, self ? *self : vm->globals[VAR_GLOB_LEVEL]);
 	push_thread(vm, vm->thread, integer(vm, nargs));
 	if(self && self->type != VAR_OBJECT)
 		vm_error(vm, "'%s' is not a object", variable_type_names[self->type]);
-	call_function(vm, vm->thread, file, function, nargs, self ? object_for_var(self) : NULL, false);
+	call_function(vm, vm->thread, file, function, nargs, false, 0);
 	add_thread(vm, vm->thread);
 	vm->thread = NULL;
 }

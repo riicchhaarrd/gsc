@@ -171,6 +171,12 @@ ASTNode *expression(Parser *parser)
 	return node;
 }
 
+ASTNode *nud_self(Parser *parser, Token *t)
+{
+	NODE(Self, n);
+	return (ASTNode *)n;
+}
+
 ASTNode *nud_literal(Parser *parser, Token *t)
 {
 	switch(t->type)

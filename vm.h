@@ -97,7 +97,7 @@ typedef struct
     Instruction *instructions;
     const char *file, *function;
     int ip;
-    Variable self;
+    // Variable self;
 } StackFrame;
 enum { sizeof_StackFrame = sizeof(StackFrame) };
 
@@ -209,7 +209,7 @@ void vm_register_c_function(VM *vm, const char *name, vm_CFunction callback);
 void vm_register_c_method(VM *vm, const char *name, vm_CMethod callback);
 const char *vm_stringify(VM *vm, Variable *v, char *buf, size_t n);
 size_t vm_argc(VM *vm);
-Variable *vm_argv(VM *vm, size_t idx);
+Variable *vm_argv(VM *vm, int idx);
 Variable vm_create_object(VM *vm);
 void vm_pushvar(VM *vm, Variable*);
 void vm_pushobject(VM *vm, Object *o);

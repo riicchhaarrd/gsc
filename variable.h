@@ -21,12 +21,11 @@ static const char *variable_type_names[] = { "UNDEFINED", "STRING",			  "INTEGER
 
 #define VAR_TYPE_FLAG(X) (1 << (X))
 
-static const char *variable_globals[] = { "level", "game", "self", "anim", NULL };
+static const char *variable_globals[] = { "level", "game", "anim", NULL };
 typedef enum
 {
 	VAR_GLOB_LEVEL,
 	VAR_GLOB_GAME,
-	VAR_GLOB_SELF,
 	VAR_GLOB_ANIM,
 	VAR_GLOB_MAX
 } VariableGlob;

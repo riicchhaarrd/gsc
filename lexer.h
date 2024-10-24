@@ -27,6 +27,7 @@
 	X(UNDEFINED, CT_HASH(undefined, 0x9b61ad43)) \
 	X(THREAD, CT_HASH(thread, 0xa2026671))       \
 	X(WAIT, CT_HASH(wait, 0x892e4ca0))           \
+	X(SELF, CT_HASH(self, 0x645ba277))           \
 	X(WAITTILLFRAMEEND, CT_HASH(waittillframeend, 0x17257589))
 
 #define LEXER_STATIC static

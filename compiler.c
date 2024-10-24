@@ -4,6 +4,8 @@
 #include "compiler.h"
 #include "variable.h"
 
+static void property(Compiler *c, ASTNode *n, int op);
+
 static Node *node(Compiler *c, Node **list)
 {
 	Node *n = new(c->arena, Node, 1);
@@ -495,6 +497,7 @@ static bool is_expr(ASTNode *n)
 		case AST_LITERAL:
 		case AST_MEMBER_EXPR:
 		case AST_UNARY_EXPR:
+		// case AST_SELF:
 		case AST_VECTOR_EXPR: return true;
 	}
 	return false;
@@ -518,9 +521,9 @@ static void property(Compiler *c, ASTNode *n, int op)
 		break;
 		case AST_MEMBER_EXPR:
 		{
-			visit(n->ast_member_expr_data.object);
 			// lvalue(c, n->ast_member_expr_data.object);
 			property(c, n->ast_member_expr_data.prop, n->ast_member_expr_data.op);
+			visit(n->ast_member_expr_data.object);
 			emit(c, OP_LOAD_FIELD);
 		}
 		break;
@@ -575,6 +578,12 @@ static void lvalue(Compiler *c, ASTNode *n)
 {
 	switch(n->type)
 	{
+		case AST_SELF:
+		{
+			emit4(c, OP_REF, integer(0), NONE, NONE, NONE);
+		}
+		break;
+
 		case AST_IDENTIFIER:
 		{
 			int glob_idx = -1;
@@ -755,9 +764,14 @@ IMPL_VISIT(ASTUnaryExpr)
 }
 IMPL_VISIT(ASTMemberExpr)
 {
-	visit(n->object);
 	property(c, n->prop, n->op);
+	visit(n->object);
 	emit(c, OP_LOAD_FIELD);
+}
+
+IMPL_VISIT(ASTSelf)
+{
+	emit4(c, OP_LOAD, integer(0), NONE, NONE, NONE);
 }
 
 IMPL_VISIT(ASTIdentifier)
@@ -834,12 +848,24 @@ IMPL_VISIT(ASTCallExpr)
 		call_flags |= VM_CALL_FLAG_THREADED;
 	if(n->object)
 		call_flags |= VM_CALL_FLAG_METHOD;
-	emit2(c, OP_PUSH, integer(AST_LITERAL_TYPE_INTEGER), integer(n->numarguments));
 	if(n->object)
 	{
 		visit(n->object);
 		// lvalue(c, n->object);
 	}
+	else
+	{
+		if(n->callee->type == AST_MEMBER_EXPR)
+		{
+			visit(n->callee->ast_member_expr_data.object);
+			call_flags |= VM_CALL_FLAG_METHOD;
+		}
+		else
+		{
+			emit4(c, OP_LOAD, integer(0), NONE, NONE, NONE); // put "previous" / current local variable self on stack
+		}
+	}
+	emit2(c, OP_PUSH, integer(AST_LITERAL_TYPE_INTEGER), integer(n->numarguments));
 	callee(c, n->callee, call_flags, n->numarguments);
 }
 IMPL_VISIT(ASTExprStmt)
@@ -933,6 +959,7 @@ VMFunction *compile_function(Compiler *c, ASTFile *file, ASTFunction *n, Arena a
 	c->current_scope = 0;
 	vmf->parameter_count = n->parameter_count;
 	debug_info_node(c, n);
+	define_local_variable(c, "self", true);
 	for(ASTNode *it = n->parameters; it; it = it->next)
     {
 		if(it->type != AST_IDENTIFIER)
