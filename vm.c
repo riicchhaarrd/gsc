@@ -696,6 +696,29 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 	Variable result = { .type = type };
 	switch(type)
 	{
+		default:
+		{
+			switch(op)
+			{
+				case TK_EQUAL:
+					result.type = VAR_BOOLEAN;
+					result.u.ival = lhs->type == rhs->type && !memcmp(&lhs->u, &rhs->u, sizeof(lhs->u));
+					break;
+				case TK_NEQUAL:
+					result.type = VAR_BOOLEAN;
+					result.u.ival = !(lhs->type == rhs->type && !memcmp(&lhs->u, &rhs->u, sizeof(lhs->u)));
+					break;
+				default:
+				{
+					vm_error(vm,
+							 "Unsupported operator '%s' for type '%s'",
+							 token_type_to_string(op, temp, sizeof(temp)),
+							 variable_type_names[type]);
+				}
+				break;
+			}
+		}
+		break;
 		case VAR_UNDEFINED:
 		{
 			switch(op)
@@ -906,12 +929,6 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 				}
 				break;
 			}
-		}
-		break;
-
-		default:
-		{
-			vm_error(vm, "Unsupported operator '%s' for type '%s'", token_type_to_string(op, temp, sizeof(temp)), variable_type_names[type]);
 		}
 		break;
 	}
