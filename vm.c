@@ -1098,43 +1098,69 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 
 		case OP_LOAD_FIELD:
 		{
-			char prop[256] = { 0 };
-			pop_string(vm, prop, sizeof(prop));
 			Variable obj = pop(vm);
-
-			if(obj.type == VAR_UNDEFINED)
+			if(obj.type == VAR_STRING)
 			{
-				push(vm, undef);
-			}
-			else if(obj.type != VAR_OBJECT)
-			{
-				vm_error(vm, "'%s' is not a object", variable_type_names[obj.type]);
+				Variable key = pop(vm);
+				const char *str = obj.u.sval;
+				size_t n = strlen(str);
+				if(key.type == VAR_STRING)
+				{
+					if(!strcmp(key.u.sval, "length") || !strcmp(key.u.sval, "size"))
+					{
+						vm_pushinteger(vm, n);
+					}
+				} else if(key.type == VAR_INTEGER)
+				{
+					size_t idx = key.u.ival;
+					// size_t idx = (size_t)pop_int(vm);
+					if(idx > n)
+						vm_error(vm, "%d out bounds for string '%s' (length %d)", idx, str, n);
+					vm_pushstring_n(vm, str + idx, 1);
+				} else
+				{
+					vm_error(vm, "Unsupported key type '%s' for string", variable_type_names[key.type]);
+				}
 			}
 			else
 			{
-				Object *o = object_for_var(&obj);
-				if(!o)
+				char prop[256] = { 0 };
+				pop_string(vm, prop, sizeof(prop));
+
+				if(obj.type == VAR_UNDEFINED)
 				{
-					vm_error(vm, "object is null");
+					push(vm, undef);
 				}
-				if(!strcmp(prop, "size"))
+				else if(obj.type != VAR_OBJECT)
 				{
-					push(vm, integer(vm, o->field_count));
-					// Variable *v = variable(vm);
-					// v->type = VAR_INTEGER;
-					// v->u.ival = o->fields.length;
-					// push(vm, v);
+					vm_error(vm, "'%s' is not a object", variable_type_names[obj.type]);
 				}
 				else
 				{
-					ObjectField *entry = vm_object_upsert(NULL, o, prop);
-					if(!entry)
+					Object *o = object_for_var(&obj);
+					if(!o)
 					{
-						push(vm, undef);
+						vm_error(vm, "object is null");
+					}
+					if(!strcmp(prop, "size"))
+					{
+						push(vm, integer(vm, o->field_count));
+						// Variable *v = variable(vm);
+						// v->type = VAR_INTEGER;
+						// v->u.ival = o->fields.length;
+						// push(vm, v);
 					}
 					else
 					{
-						push(vm, *entry->value);
+						ObjectField *entry = vm_object_upsert(NULL, o, prop);
+						if(!entry)
+						{
+							push(vm, undef);
+						}
+						else
+						{
+							push(vm, *entry->value);
+						}
 					}
 				}
 			}
