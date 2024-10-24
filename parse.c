@@ -27,8 +27,10 @@ skipping over the irrelevant precedence levels.
 
 ASTNode *expression(Parser *parser);
 
-static void DEBUG(const char *fmt, ...)
+static void DEBUG(Parser *parser, const char *fmt, ...)
 {
+	if(!parser->verbose)
+		return;
 	char message[2048];
 	va_list va;
 	va_start(va, fmt);
@@ -150,7 +152,7 @@ ASTNode *call_expression(Parser *parser, ASTNode *callee)
 			{
 				lexer_error(parser->lexer, "Max args for function call");
 			}
-			printf("arg: %s\n", ast_node_names[arg->type]);
+			// printf("arg: %s\n", ast_node_names[arg->type]);
 			n->arguments[nargs++] = arg;
 			if(parser->token.type != ',')
 				break;
@@ -539,7 +541,7 @@ ASTNode *parse_nud(Parser *parser, Token *token)
 {
 	const Operator *op = &operator_table[token->type];
 	char type[64];
-	DEBUG("parse_nud(parser, token = '%s')", token_type_to_string(token->type, type, sizeof(type)));
+	DEBUG(parser, "parse_nud(parser, token = '%s')", token_type_to_string(token->type, type, sizeof(type)));
 	if(op->nud)
 	{
 		return op->nud(parser, token);
@@ -554,7 +556,7 @@ ASTNode *parse_led(Parser *parser, ASTNode *left, Token *token, int bp)
 {
 	const Operator *op = &operator_table[token->type];
 	char type[64];
-	DEBUG("parse_led(parser, left = %s, token = '%s', bp = %d)",
+	DEBUG(parser, "parse_led(parser, left = %s, token = '%s', bp = %d)",
 		  ast_node_names[left->type],
 		  token_type_to_string(token->type, type, sizeof(type)),
 		  bp);

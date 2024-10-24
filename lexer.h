@@ -431,7 +431,7 @@ LEXER_STATIC bool lexer_accept(Lexer *lexer, TokenType type, Token *t)
 	}
 	return true;
 }
-#define lexer_expect(lexer, type, t) lexer_expect_(lexer, type, t, __FILE__, __LINE__)
+#define lexer_expect(lexer, type, t) lexer_expect_(lexer, type, t, FILE_BASENAME, __LINE__)
 LEXER_STATIC void lexer_expect_(Lexer *lexer, int type, Token *t, const char *file, int line)
 {
 	Token _;

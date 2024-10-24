@@ -40,6 +40,11 @@ struct FunctionPointerExpr
 // 	ASTNodePtr functions[?];
 // };
 
+struct StructExpr
+{
+	public:
+	ASTNodePtr elements[?];
+};
 struct ArrayExpr
 {
 	public:
@@ -108,6 +113,12 @@ enum LiteralType
 	Function,
 	LocalizedString,
 	Undefined
+};
+
+struct Self
+{
+ 	public:
+	int unused;
 };
 
 struct Literal

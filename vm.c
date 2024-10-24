@@ -1868,12 +1868,12 @@ static bool call_function(VM *vm, Thread *thr, const char *file, const char *fun
     sf->function = function;
     sf->instructions = vmf->instructions;
 	sf->ip = 0;
-	static char asm_filename[256];
-	snprintf(asm_filename, sizeof(asm_filename), "debug/%s_%s.gscasm", file, function);
-	FILE *fp = fopen(asm_filename, "w");
-	for(size_t i = 0; i < buf_size(vmf->instructions); ++i)
-		print_instruction(vm, &vmf->instructions[i], fp);
-	fclose(fp);
+	// static char asm_filename[256];
+	// snprintf(asm_filename, sizeof(asm_filename), "debug/%s_%s.gscasm", file, function);
+	// FILE *fp = fopen(asm_filename, "w");
+	// for(size_t i = 0; i < buf_size(vmf->instructions); ++i)
+	// 	print_instruction(vm, &vmf->instructions[i], fp);
+	// fclose(fp);
 	// getchar();
 	return true;
 }

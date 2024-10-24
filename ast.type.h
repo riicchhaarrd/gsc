@@ -2,6 +2,7 @@
 #define AST_X_MACRO(X) \
 	X(AST_FUNCTION, ASTFunction, ast_function) \
 	X(AST_FUNCTION_POINTER_EXPR, ASTFunctionPointerExpr, ast_function_pointer_expr) \
+	X(AST_STRUCT_EXPR, ASTStructExpr, ast_struct_expr) \
 	X(AST_ARRAY_EXPR, ASTArrayExpr, ast_array_expr) \
 	X(AST_GROUP_EXPR, ASTGroupExpr, ast_group_expr) \
 	X(AST_ASSIGNMENT_EXPR, ASTAssignmentExpr, ast_assignment_expr) \
@@ -10,6 +11,7 @@
 	X(AST_CONDITIONAL_EXPR, ASTConditionalExpr, ast_conditional_expr) \
 	X(AST_FILE_REFERENCE, ASTFileReference, ast_file_reference) \
 	X(AST_IDENTIFIER, ASTIdentifier, ast_identifier) \
+	X(AST_SELF, ASTSelf, ast_self) \
 	X(AST_LITERAL, ASTLiteral, ast_literal) \
 	X(AST_MEMBER_EXPR, ASTMemberExpr, ast_member_expr) \
 	X(AST_UNARY_EXPR, ASTUnaryExpr, ast_unary_expr) \
@@ -58,6 +60,12 @@ typedef struct
 {
 	ASTNodePtr expression;
 } ASTFunctionPointerExpr;
+
+typedef struct
+{
+	size_t numelements;
+	ASTNodePtr *elements;
+} ASTStructExpr;
 
 typedef struct
 {
@@ -117,12 +125,15 @@ typedef enum
 	AST_LITERAL_TYPE_INTEGER,
 	AST_LITERAL_TYPE_BOOLEAN,
 	AST_LITERAL_TYPE_FLOAT,
-	// AST_LITERAL_TYPE_VECTOR,
-	// AST_LITERAL_TYPE_ANIMATION,
 	AST_LITERAL_TYPE_FUNCTION,
 	AST_LITERAL_TYPE_LOCALIZED_STRING,
 	AST_LITERAL_TYPE_UNDEFINED
 } ASTLiteralType;
+
+typedef struct
+{
+	int unused;
+} ASTSelf;
 
 typedef struct
 {
@@ -313,6 +324,17 @@ static size_t ASTFunctionPointerExpr_visit(AstVisitor *visitor, const char *key,
 	return changed_count;
 }
 
+static size_t ASTStructExpr_visit(AstVisitor *visitor, const char *key, ASTStructExpr *inst, size_t nmemb, size_t size)
+{
+	size_t changed_count = 0;
+	size_t n = 0;
+	if(visitor->pre_visit(visitor, "elements", 0xf6da3a6c, (void**)&inst->elements, &inst->numelements, sizeof(inst->elements[0])) && inst->elements && inst->numelements > 0)
+	{
+		changed_count += visitor->visit_ASTNodePtr(visitor, "elements", (ASTNodePtr*)&inst->elements[0], inst->numelements, sizeof(inst->elements[0]));
+	}
+	return changed_count;
+}
+
 static size_t ASTArrayExpr_visit(AstVisitor *visitor, const char *key, ASTArrayExpr *inst, size_t nmemb, size_t size)
 {
 	size_t changed_count = 0;
@@ -437,6 +459,17 @@ static size_t ASTIdentifier_visit(AstVisitor *visitor, const char *key, ASTIdent
 	if(visitor->pre_visit(visitor, "name", 0x8e631b86, (void**)&inst->name, NULL, sizeof(inst->name[0])))
 	{
 		changed_count += visitor->visit_char(visitor, "name", (char*)&inst->name[0], 256, sizeof(inst->name[0]));
+	}
+	return changed_count;
+}
+
+static size_t ASTSelf_visit(AstVisitor *visitor, const char *key, ASTSelf *inst, size_t nmemb, size_t size)
+{
+	size_t changed_count = 0;
+	size_t n = 0;
+	if(visitor->pre_visit(visitor, "unused", 0xd46e39db, NULL, NULL, sizeof(inst->unused)))
+	{
+		changed_count += visitor->visit_int(visitor, "unused", (int*)&inst->unused, 1, sizeof(inst->unused));
 	}
 	return changed_count;
 }
@@ -721,6 +754,10 @@ static void ASTFunctionPointerExpr_init(ASTFunctionPointerExpr *inst)
 {
 }
 
+static void ASTStructExpr_init(ASTStructExpr *inst)
+{
+}
+
 static void ASTArrayExpr_init(ASTArrayExpr *inst)
 {
 }
@@ -752,6 +789,10 @@ static void ASTFileReference_init(ASTFileReference *inst)
 }
 
 static void ASTIdentifier_init(ASTIdentifier *inst)
+{
+}
+
+static void ASTSelf_init(ASTSelf *inst)
 {
 }
 

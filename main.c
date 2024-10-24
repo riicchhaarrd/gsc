@@ -133,7 +133,7 @@ static const char *string(Parser *parser, TokenType type)
 
 static void syntax_error(Parser *parser, const char *fmt, ...)
 {
-	printf("error %s\n", fmt);
+	printf("PARSE ERROR: %s\n", fmt);
 	exit(-1);
 }
 
@@ -145,8 +145,8 @@ static ASTNode *body(Parser *parser);
 
 static ASTNode *statement(Parser *parser)
 {
-	printf("statement() : ");
-	dump_token(parser->lexer, &parser->token);
+	// printf("statement() : ");
+	// dump_token(parser->lexer, &parser->token);
 	// lexer_step(parser->lexer, &parser->token);
 	ASTNode *n = NULL;
 	switch(parser->token.type)
@@ -421,7 +421,7 @@ static void parse(Parser *parser, ASTProgram *prog, ASTFile *file)
 			{
 				advance(parser, '#');
 				const char *ident = string(parser, TK_IDENTIFIER);
-				printf("ident:%s\n",ident);
+				// printf("ident:%s\n", ident);
 				if(!strcmp(ident, "include"))
 				{
 					const char *path = string(parser, TK_FILE_REFERENCE);
@@ -508,7 +508,7 @@ static void tokenize(Lexer *lexer)
 	{
 		lexer_token_read_string(lexer, &t, repr, sizeof(repr));
 		// printf("%s", repr);
-		printf("Token: %s '%s' (%d[%d])\n", token_type_to_string(t.type, type, sizeof(type)), repr, t.offset, t.length);
+		// printf("Token: %s '%s' (%d[%d])\n", token_type_to_string(t.type, type, sizeof(type)), repr, t.offset, t.length);
 	}
 }
 
@@ -521,20 +521,8 @@ static bool node_fn(ASTNode *n, void *ctx)
 	return false;
 }
 
-static ASTFile *parse_file(Allocator *allocator, const char *filename, ASTProgram *program)
+static ASTFile *parse_source(Allocator *allocator, ASTFile *file, const char *data, ASTProgram *program)
 {
-	char path[512];
-	snprintf(path, sizeof(path), "%s%s.gsc", program->base_path, filename);
-	for(char *p = path; *p; p++)
-		*p = *p == '\\' ? '/' : *p;
-
-	ASTFile *file = add_file(program, filename);
-	unsigned char *data = read_text_file(path);
-	if(!data)
-	{
-		printf("Can't read '%s'\n", filename);
-		return NULL;
-	}
 	file->source = data;
 
 	char string[16384];
@@ -553,6 +541,7 @@ static ASTFile *parse_file(Allocator *allocator, const char *filename, ASTProgra
 	}
 	l.jmp = &jmp;
 	Parser parser = { 0 };
+	parser.verbose = false;
 	parser.allocator = allocator;
 	parser.string = string;
 	parser.max_string_length = sizeof(string);
@@ -567,6 +556,23 @@ static ASTFile *parse_file(Allocator *allocator, const char *filename, ASTProgra
 		traverse(func, node_fn, program);
 	}
 	return file;
+}
+
+static ASTFile *parse_file(Allocator *allocator, const char *filename, ASTProgram *program)
+{
+	char path[512];
+	snprintf(path, sizeof(path), "%s%s.gsc", program->base_path, filename);
+	for(char *p = path; *p; p++)
+		*p = *p == '\\' ? '/' : *p;
+
+	ASTFile *file = add_file(program, filename);
+	unsigned char *data = read_text_file(path);
+	if(!data)
+	{
+		printf("Can't read '%s'\n", filename);
+		return NULL;
+	}
+	return parse_source(allocator, file, data, program);
 }
 
 static void dump_function(ASTFile *file, ASTFunction *func)
@@ -595,6 +601,9 @@ static void dump_program(ASTProgram *prog)
 }
 int get_memory_usage_kb()
 {
+#ifdef EMSCRIPTEN
+	return -1;
+#else
 	FILE *file = fopen("/proc/self/status", "r");
 	if(!file)
 	{
@@ -615,6 +624,7 @@ int get_memory_usage_kb()
 
 	fclose(file);
 	return memory_usage_kb;
+#endif
 }
 
 typedef struct
@@ -689,43 +699,144 @@ VMFunction *vm_func_lookup(void *ctx, const char *file, const char *function)
 	return compfunc;
 }
 
-int main(int argc, char **argv)
+static char *heap;
+Arena perm;
+jmp_buf jmp_;
+
+StringTable strtab;
+Allocator perm_allocator;
+Allocator scratch_allocator;
+Arena scratch;
+
+void init()
 {
-	size_t cap = (1 << 29);
-	char *heap = malloc(cap);
-	printf("[INFO] Allocated %.2f MB\n", (float)cap / 1000.f / 1000.f);
+	// size_t cap = (1 << 29);
+	size_t cap = (1 << 27);
+	if(!heap)
+		heap = malloc(cap);
+	// printf("[INFO] Allocated %.2f MB\n", (float)cap / 1000.f / 1000.f);
 	// getchar();
-	Arena perm = { 0 };
-	jmp_buf jmp_;
 	arena_init(&perm, heap, cap);
-	if(setjmp(jmp_))
-	{
-		fprintf(stderr, "[ERROR] Out of memory!\n");
-		exit(-1);
-	}
 	perm.jmp_oom = &jmp_;
 
-	Allocator perm_allocator = arena_allocator(&perm);
+	perm_allocator = arena_allocator(&perm);
 	cap >>= 2;
-	Arena scratch = arena_split(&perm, cap);
-	Allocator scratch_allocator = arena_allocator(&scratch);
+	scratch = arena_split(&perm, cap);
+	scratch_allocator = arena_allocator(&scratch);
 
 	cap >>= 2;
-	StringTable strtab;
 	string_table_init(&strtab, arena_split(&perm, cap));
+}
 
-	bool verbose = false;
-	char *input_file = NULL;
-	for(int i = 1; i < argc; i++)
+VM *gvm;
+
+bool frame(float dt)
+{
+	if(gvm)
 	{
-		if(!strcmp(argv[i], "-v"))
-		{
-			verbose = true;
-		}
-		else// if(i == argc - 1)
-		{
-			input_file = argv[i];
-		}
+		if(!vm_run_threads(gvm, dt))
+			gvm = NULL;
+	}
+	return true;
+}
+
+int execute(const char *source, bool verbose)
+{
+	init();
+	
+	if(setjmp(jmp_))
+	{
+		printf("[ERROR] Out of memory!\n");
+		return -1;
+	}
+
+	hash_table_init(&compiled_files, 12, &perm_allocator);
+	
+	Compiler compiler = { 0 };
+	jmp_buf jmp;
+	ASTProgram *program = NULL;
+	ASTFile *file = NULL;
+	if(setjmp(jmp))
+	{
+		fprintf(stderr, "Failed");
+		return -1;
+	}
+	// Interpreter interp = { 0 };
+	// hash_table_init(&interp.stringtable, 16);
+	// interp.jmp = &jmp;
+	void ast_visitor_gsc_init(ASTVisitor *v);
+	compiler_init(&compiler, &jmp, &perm_allocator, &strtab);
+
+	static const char *base_path = "scripts/";
+	
+	program = new(&scratch, ASTProgram, 1);
+	program->allocator = &scratch_allocator;
+	snprintf(program->base_path, sizeof(program->base_path), "%s", base_path);
+
+	hash_table_init(&program->files, 10, &scratch_allocator);
+	const char *input_file = "*source";
+	file = add_file(program, input_file);
+	parse_source(&scratch_allocator, file, source, program);
+
+	// compiler.source = program->source;
+
+	// for(HashTableEntry *it = program->files.head; it; it = it->next)
+	// {
+	// 	ASTFile *f = it->value;
+	// 	if(f->parsed)
+	// 		continue;
+	// 	parse_file(&scratch_allocator, f->path, program);
+	// }
+	
+	// Compile all functions
+	for(HashTableEntry *it = program->files.head; it; it = it->next)
+	{
+		ASTFile *f = it->value;
+		if(!f->parsed)
+			continue;
+		compile_file(&perm_allocator, scratch, &compiler, f);
+		// printf("%f MB", get_memory_usage_kb() / 1000.f);
+		// getchar();
+	}
+	// getchar();
+	
+	VM *vm = perm_allocator.malloc(perm_allocator.ctx, sizeof(VM));
+	vm_init(vm, &perm_allocator);
+	vm->flags = VM_FLAG_NONE;
+	if(verbose)
+		vm->flags |= VM_FLAG_VERBOSE;
+	vm->jmp = &jmp;
+	vm->ctx = program;
+	vm->func_lookup = vm_func_lookup;
+	compiler_free(&compiler);
+	hash_table_destroy(&program->files);
+	vm->strings = &strtab;
+
+	void register_c_functions(VM *vm);
+	register_c_functions(vm);
+
+	VMFunction *cf = get_function(get_file(input_file), "main");
+	if(cf)
+	{
+		// dump_instructions(&compiler, cf->instructions);
+
+		vm_call_function_thread(vm, input_file, "main", 0, NULL);
+		gvm = vm;
+	}
+	else
+	{
+		printf("can't find %s::%s\n", input_file, "main");
+	}
+}
+
+int execute_file(const char *input_file, bool verbose)
+{
+	init();
+	
+	if(setjmp(jmp_))
+	{
+		printf("[ERROR] Out of memory!\n");
+		return -1;
 	}
 
 	if(!input_file)
@@ -750,7 +861,7 @@ int main(int argc, char **argv)
 	// interp.jmp = &jmp;
 	void ast_visitor_gsc_init(ASTVisitor *v);
 	compiler_init(&compiler, &jmp, &perm_allocator, &strtab);
-	assert(argc > 1);
+	
 	#ifdef DISK
 	static const char *base_path = "scripts/";
 	
