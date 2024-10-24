@@ -1551,7 +1551,6 @@ void vm_init(VM *vm, Allocator *allocator)
 	// size_t n = 64 * 10000 * 10000;
 	// char *buf = malloc(n); // TODO: free memory
 	// arena_init(&vm->arena, buf, n);
-	return vm;
 }
 
 void vm_register_c_function(VM *vm, const char *name, vm_CFunction callback)
