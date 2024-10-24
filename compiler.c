@@ -357,6 +357,11 @@ IMPL_VISIT(ASTArrayExpr)
 	emit(c, OP_TABLE);
 }
 
+IMPL_VISIT(ASTStructExpr)
+{
+	emit(c, OP_TABLE);
+}
+
 IMPL_VISIT(ASTEmptyStmt)
 {
 }

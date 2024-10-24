@@ -497,6 +497,7 @@ static const Operator operator_table[TK_MAX] = {
 	[TK_TRUE] = { 0, LEFT_ASSOC, nud_literal, NULL },
 	[TK_FALSE] = { 0, LEFT_ASSOC, nud_literal, NULL },
 	[TK_IDENTIFIER] = { 80, LEFT_ASSOC, nud_literal, led_member_call },
+	[TK_SELF] = { 80, LEFT_ASSOC, nud_self, NULL },
 	[TK_FILE_REFERENCE] = { 80, LEFT_ASSOC, nud_file_ref, led_member_call },
 	[TK_THREAD] = { 80, LEFT_ASSOC, nud_thread_call, led_thread_member_call },
 	[TK_SCOPE_RESOLUTION] = { 0, LEFT_ASSOC, nud_literal, NULL },

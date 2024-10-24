@@ -54,6 +54,18 @@ DEFINE_VISITOR(ASTFunctionPointerExpr)
 }
 DEFINE_VISITOR_END()
 
+DEFINE_VISITOR(ASTSelf)
+{
+}
+DEFINE_VISITOR_END()
+
+DEFINE_VISITOR(ASTStructExpr)
+{
+    for(size_t i = 0; i < n->numelements; ++i)
+		visit(n->elements[i]);
+}
+DEFINE_VISITOR_END()
+
 DEFINE_VISITOR(ASTArrayExpr)
 {
     for(size_t i = 0; i < n->numelements; ++i)
