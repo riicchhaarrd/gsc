@@ -333,16 +333,20 @@ ASTNode *led_bracket(Parser *parser, ASTNode *left, Token *token, int bp)
 	if(parser->token.type == '[')
 	{
 		advance(parser, '[');
-		NODE(FunctionPointerExpr, fp);
-		fp->expression = expression(parser);
+		ASTNode *fn = parse_function_name(parser, token);
 		advance(parser, ']');
 		advance(parser, ']');
-		// advance(parser, '(');
-		// ASTNodePtr n = call_expression(parser, fp);
-		// n->ast_call_expr_data.threaded = false;
-		// n->ast_call_expr_data.object = left;
-		// return (ASTNode *)n;
-		return (ASTNode*)fp;
+		advance(parser, '(');
+		ASTNodePtr n = call_expression(parser, fn);
+		n->ast_call_expr_data.threaded = false;
+		n->ast_call_expr_data.object = left;
+		return n;
+		// advance(parser, '[');
+		// NODE(FunctionPointerExpr, fp);
+		// fp->expression = expression(parser);
+		// advance(parser, ']');
+		// advance(parser, ']');
+		// return (ASTNode*)fp;
 	}
     NODE(MemberExpr, n);
 	n->object = left;
