@@ -618,6 +618,19 @@ static Variable coerce_int(VM *vm, Variable *v)
 	return result;
 }
 
+static Variable coerce_vector(VM *vm, Variable *v)
+{
+	Variable result = { .type = VAR_VECTOR };
+	switch(v->type)
+	{
+		case VAR_INTEGER: for(int i = 0; i < 3; ++i) result.u.vval[i] = (float)v->u.ival; break;
+		case VAR_FLOAT: for(int i = 0; i < 3; ++i) result.u.vval[i] = v->u.fval; break;
+		case VAR_VECTOR: return *v;
+		default: vm_error(vm, "Cannot coerce '%s' to vector", variable_type_names[v->type]); break;
+	}
+	return result;
+}
+
 static Variable coerce_float(VM *vm, Variable *v)
 {
 	Variable result = { .type = VAR_FLOAT };
@@ -860,8 +873,12 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 		break;
 		case VAR_VECTOR:
 		{
-			float *a = lhs->u.vval;
-			float *b = rhs->u.vval;
+
+			Variable vec_a, vec_b;
+			vec_a = coerce_vector(vm, lhs);
+			vec_b = coerce_vector(vm, rhs);
+			float *a = vec_a.u.vval;
+			float *b = vec_b.u.vval;
 			float *c = result.u.vval;
 			switch(op)
 			{
