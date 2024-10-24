@@ -20,12 +20,14 @@ typedef int (*vm_CFunction)(VM *);
 
 int vm_checkinteger(VM*, int);
 void vm_pushinteger(VM*, int);
+void vm_pushfloat(VM *vm, float val);
 void vm_pushbool(VM *vm, bool b);
 void vm_pushundefined(VM *vm);
 float vm_checkfloat(VM *vm, int idx);
 void vm_checkvector(VM *vm, int idx, float *outvec);
 const char *vm_checkstring(VM *vm, int idx);
 void vm_pushstring(VM *vm, const char *str);
+void vm_pushstring_n(VM *vm, const char *str, size_t n);
 void vm_pushvector(VM *vm, float*);
 int vm_string_index(VM *vm, const char *s);
 

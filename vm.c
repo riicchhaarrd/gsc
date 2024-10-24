@@ -1695,6 +1695,16 @@ int vm_checkinteger(VM *vm, int idx)
 	return arg->u.ival;
 }
 
+void vm_pushstring_n(VM *vm, const char *str, size_t n)
+{
+	Variable v = var(vm);
+	v.type = VAR_STRING;
+	v.u.sval = malloc(n + 1);
+	memcpy(v.u.sval, str, n);
+	v.u.sval[n] = 0;
+	push(vm, v);
+}
+
 void vm_pushstring(VM *vm, const char *str)
 {
 	Variable v = var(vm);
@@ -1737,6 +1747,15 @@ void vm_pushinteger(VM *vm, int val)
 	v.u.ival = val;
     push(vm, v);
 }
+
+void vm_pushfloat(VM *vm, float val)
+{
+    Variable v = var(vm);
+    v.type = VAR_FLOAT;
+	v.u.fval = val;
+    push(vm, v);
+}
+
 
 void vm_pushbool(VM *vm, bool b)
 {
