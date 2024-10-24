@@ -132,6 +132,15 @@ static void print_stackframe(Thread *thr)
 	}
 }
 
+int thread_count(VM *vm)
+{
+	if(vm->thread_write_idx >= vm->thread_read_idx)
+	{
+		return vm->thread_write_idx - vm->thread_read_idx;
+	}
+	return VM_THREAD_POOL_SIZE - (vm->thread_read_idx - vm->thread_write_idx);
+}
+
 void vm_print_thread_info(VM *vm)
 {
 	if(vm->thread_read_idx == vm->thread_write_idx)
@@ -979,16 +988,7 @@ Thread *remove_thread(VM *vm)
 	return t;
 }
 
-int thread_count(VM *vm)
-{
-	if(vm->thread_write_idx >= vm->thread_read_idx)
-	{
-		return vm->thread_write_idx - vm->thread_read_idx;
-	}
-	return VM_THREAD_POOL_SIZE - (vm->thread_read_idx - vm->thread_write_idx);
-}
-
-static bool call_function(VM *vm, Thread*, const char *file, const char *function, size_t nargs, Object *self, bool);
+static bool call_function(VM *vm, Thread*, const char *file, const char *function, size_t nargs, bool, int);
 #define ASSERT_STACK(X)                                                              \
 	do                                                                               \
 	{                                                                                \
