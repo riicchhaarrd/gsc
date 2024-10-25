@@ -1117,6 +1117,9 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 					if(!strcmp(key.u.sval, "length") || !strcmp(key.u.sval, "size"))
 					{
 						vm_pushinteger(vm, n);
+					} else
+					{
+						vm_error(vm, "'%s' is not a object", variable_type_names[obj.type]);
 					}
 				} else if(key.type == VAR_INTEGER)
 				{
