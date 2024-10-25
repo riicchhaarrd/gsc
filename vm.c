@@ -1107,7 +1107,13 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 		case OP_LOAD_FIELD:
 		{
 			Variable obj = pop(vm);
-			if(obj.type == VAR_STRING)
+			if(obj.type == VAR_VECTOR)
+			{
+				int idx = pop_int(vm);
+				if(idx < 0 || idx > 2)
+					vm_error(vm, "Index %d out of bounds for vector", idx);
+				vm_pushfloat(vm, obj.u.vval[idx]);
+			} else if(obj.type == VAR_STRING)
 			{
 				Variable key = pop(vm);
 				const char *str = obj.u.sval;
