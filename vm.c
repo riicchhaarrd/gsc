@@ -893,6 +893,22 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 			float *c = result.u.vval;
 			switch(op)
 			{
+				case TK_EQUAL:
+				case TK_NEQUAL:
+				{
+					bool eq = true;
+					for(int i = 0; i < 3; ++i)
+					{
+						if(fabs(b[i] - a[i]) > 0.001f) // replace with epsilon
+						{
+							eq = false;
+							break;
+						}
+					}
+					result.type = VAR_BOOLEAN;
+					result.u.ival = op == TK_EQUAL ? eq : !eq;
+				}
+				break;
 				case TK_PLUS_ASSIGN:
 				case '+':
 					for(int i = 0; i < 3; ++i)
