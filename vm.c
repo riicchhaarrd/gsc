@@ -1463,8 +1463,8 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 		case OP_BINOP:
 		{
 			int op = read_int(vm, ins, 0);
-			Variable a = pop(vm);
 			Variable b = pop(vm);
+			Variable a = pop(vm);
 			Variable result = binop(vm, &a, &b, op);
 			info(vm, "binop result: %d\n", result.u.ival);
 			push(vm, result);

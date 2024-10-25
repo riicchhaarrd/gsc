@@ -825,9 +825,9 @@ IMPL_VISIT(ASTAssignmentExpr)
 	}
 	else
 	{
-		visit(n->rhs);
 		visit(n->lhs);
-		
+		visit(n->rhs);
+		assert(n->op != TK_LOGICAL_AND && n->op != TK_LOGICAL_OR);
 		emit4(c, OP_BINOP, integer(n->op), NONE, NONE, NONE);
 		lvalue(c, n->lhs);
 		emit(c, OP_STORE);
@@ -836,9 +836,50 @@ IMPL_VISIT(ASTAssignmentExpr)
 }
 IMPL_VISIT(ASTBinaryExpr)
 {
-	visit(n->rhs);
-	visit(n->lhs);
-	emit4(c, OP_BINOP, integer(n->op), NONE, NONE, NONE);
+	switch(n->op)
+	{
+		case TK_LOGICAL_AND:
+		{
+			visit(n->lhs);
+			emit(c, OP_TEST);
+			int jz = emit(c, OP_JZ);
+
+			emit(c, OP_CONST_1);
+			visit(n->rhs);
+
+			emit4(c, OP_BINOP, integer(n->op), NONE, NONE, NONE);
+			int jmp = emit(c, OP_JMP);
+			
+			patch_reljmp(c, jz);
+			emit(c, OP_CONST_0);
+			patch_reljmp(c, jmp);
+		}
+		break;
+		case TK_LOGICAL_OR:
+		{
+			visit(n->lhs);
+			emit(c, OP_TEST);
+			int jnz = emit(c, OP_JNZ);
+
+			emit(c, OP_CONST_0);
+			visit(n->rhs);
+
+			emit4(c, OP_BINOP, integer(n->op), NONE, NONE, NONE);
+			int jmp = emit(c, OP_JMP);
+			
+			patch_reljmp(c, jnz);
+			emit(c, OP_CONST_1);
+			patch_reljmp(c, jmp);
+		}
+		break;
+		default:
+		{
+			visit(n->lhs);
+			visit(n->rhs);
+			emit4(c, OP_BINOP, integer(n->op), NONE, NONE, NONE);
+		}
+		break;
+	}
 }
 
 IMPL_VISIT(ASTCallExpr)
