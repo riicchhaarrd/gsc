@@ -1499,16 +1499,25 @@ void vm_cleanup(VM* vm)
 // }
 // Maybe use integer keys instead?
 
+#include <ctype.h>
+
 static uint64_t vm_hash_string(const char *s)
 {
 	uint64_t h = 0x100;
 	for(ptrdiff_t i = 0; s[i]; i++)
 	{
-		h ^= s[i];
+		h ^= tolower(s[i]);
 		h *= 1111111111111111111u;
 	}
 	return h;
 }
+
+#ifndef _WIN32
+	#include <strings.h>
+	#ifndef stricmp
+		#define stricmp strcasecmp
+	#endif
+#endif
 
 ObjectField *vm_object_upsert(VM *vm, Object *o, const char *key)
 {
@@ -1542,7 +1551,7 @@ ObjectField *vm_object_upsert(VM *vm, Object *o, const char *key)
 			o->tail = &new_node->next;
 			return new_node;
 		}
-		if(!strcmp((*m)->key, key))
+		if(!stricmp((*m)->key, key))
 		{
 			return *m;
 		}
@@ -1551,7 +1560,15 @@ ObjectField *vm_object_upsert(VM *vm, Object *o, const char *key)
 	return NULL;
 }
 
-void vm_init(VM *vm, Allocator *allocator)
+ObjectField *vm_set_object_field(VM *vm, Object *o, const char *key, Variable *value)
+{
+	int idx = vm_string_index(vm, key);
+	ObjectField *entry = vm_object_upsert(vm, o, string(vm, idx));
+	*entry->value = *value;
+	return entry;
+}
+
+void vm_init(VM *vm, Allocator *allocator, StringTable *strtab)
 {
 	memset(vm, 0, sizeof(vm));
 	vm->allocator = allocator;
@@ -1585,19 +1602,13 @@ void vm_init(VM *vm, Allocator *allocator)
 
 void vm_register_c_function(VM *vm, const char *name, vm_CFunction callback)
 {
-    char lower[256];
-	snprintf(lower, sizeof(lower), "%s", name);
-	strtolower(lower);
 	// hash_table_insert(&vm->c_functions, lower)->value = callback;
-	hash_trie_upsert(&vm->c_functions, lower, vm->allocator)->value = callback;
+	hash_trie_upsert(&vm->c_functions, name, vm->allocator, false)->value = callback;
 }
 
 static vm_CFunction get_c_function(VM *vm, const char *name)
 {
-    char lower[256];
-	snprintf(lower, sizeof(lower), "%s", name);
-	strtolower(lower);
-	HashTrieNode *entry = hash_trie_upsert(&vm->c_functions, lower, NULL);
+	HashTrieNode *entry = hash_trie_upsert(&vm->c_functions, name, NULL, false);
 	// HashTableEntry *entry = hash_table_find(&vm->c_functions, lower);
 	if(!entry)
 		return NULL;
@@ -1606,18 +1617,12 @@ static vm_CFunction get_c_function(VM *vm, const char *name)
 
 void vm_register_c_method(VM *vm, const char *name, vm_CMethod callback)
 {
-    char lower[256];
-	snprintf(lower, sizeof(lower), "%s", name);
-	strtolower(lower);
-	hash_trie_upsert(&vm->c_methods, lower, vm->allocator)->value = callback;
+	hash_trie_upsert(&vm->c_methods, name, vm->allocator, false)->value = callback;
 }
 
 static vm_CMethod get_c_method(VM *vm, const char *name)
 {
-    char lower[256];
-	snprintf(lower, sizeof(lower), "%s", name);
-	strtolower(lower);
-	HashTrieNode *entry = hash_trie_upsert(&vm->c_methods, lower, NULL);
+	HashTrieNode *entry = hash_trie_upsert(&vm->c_methods, name, NULL, false);
 	if(!entry)
 		return NULL;
 	return entry->value;
