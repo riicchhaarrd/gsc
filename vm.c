@@ -1714,6 +1714,16 @@ float vm_checkfloat(VM *vm, int idx)
 	return 0;
 }
 
+bool vm_checkbool(VM *vm, int idx)
+{
+	Thread *thr = vm->thread;
+	StackFrame *sf = stack_frame(vm, thr);
+	Variable *arg = vm_argv(vm, idx);
+	if(arg->type != VAR_BOOLEAN)
+		vm_error(vm, "Not a boolean");
+	return arg->u.ival;
+}
+
 int vm_checkinteger(VM *vm, int idx)
 {
 	Thread *thr = vm->thread;

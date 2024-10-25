@@ -19,6 +19,7 @@ typedef struct VM VM;
 typedef int (*vm_CFunction)(VM *);
 
 int vm_checkinteger(VM*, int);
+bool vm_checkbool(VM *vm, int idx);
 void vm_pushinteger(VM*, int);
 void vm_pushfloat(VM *vm, float val);
 void vm_pushbool(VM *vm, bool b);
