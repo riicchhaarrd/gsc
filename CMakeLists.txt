@@ -21,6 +21,7 @@ set(SOURCES
     vm.c
     main.c
     platform.c
+    files.c
 )
 add_executable(gsc ${SOURCES})
 
