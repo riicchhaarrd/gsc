@@ -109,9 +109,12 @@ static size_t visit_ASTNodePtr(AstVisitor *visitor, const char *key, ASTNodePtr 
 	}
 }
 
+FILE *open_file(const char *path);
+
 static char *read_text_file(const char *path)
 {
-	FILE *fp = fopen(path, "r");
+	// FILE *fp = fopen(path, "r");
+	FILE *fp = open_file(path);
 	if(!fp)
 		return NULL;
 	long n = 0;
@@ -426,7 +429,11 @@ static void parse(Parser *parser, ASTProgram *prog, ASTFile *file)
 				{
 					const char *path = string(parser, TK_FILE_REFERENCE);
 					// printf("path:%s\n", path);
-					add_file(prog, path);
+					Node *include = malloc(sizeof(Node));
+					// Node *include = parser->allocator->malloc(parser->allocator, sizeof(Node));
+					include->data = add_file(prog, path);
+					include->next = file->includes;
+					file->includes = include;
 				} else if(!strcmp(ident, "using_animtree"))
 				{
 					advance(parser, '(');
@@ -561,7 +568,7 @@ static ASTFile *parse_source(Allocator *allocator, ASTFile *file, const char *da
 static ASTFile *parse_file(Allocator *allocator, const char *filename, ASTProgram *program)
 {
 	char path[512];
-	snprintf(path, sizeof(path), "%s%s.gsc", program->base_path, filename);
+	snprintf(path, sizeof(path), "%s/%s.gsc", program->base_path, filename);
 	for(char *p = path; *p; p++)
 		*p = *p == '\\' ? '/' : *p;
 
@@ -652,8 +659,16 @@ VMFunction *get_function(CompiledFile *cf, const char *name)
 	return entry->value;
 }
 
-void compile_file(Allocator *allocator, Arena scratch, Compiler *c, ASTFile *file)
+CompiledFile *compile_file(Allocator *allocator, Arena scratch, Compiler *c, ASTFile *file)
 {
+    char lower_file[256];
+	snprintf(lower_file, sizeof(lower_file), "%s", file->path);
+	strtolower(lower_file);
+	HashTableEntry *entry = hash_table_find(&compiled_files, lower_file);
+	if(entry && entry->value)
+	{
+		return entry->value;
+	}
 	c->file = file;
 	CompiledFile *cf = calloc(1, sizeof(CompiledFile));
 	hash_table_init(&cf->functions, 16, allocator);
@@ -673,10 +688,8 @@ void compile_file(Allocator *allocator, Arena scratch, Compiler *c, ASTFile *fil
 			func_entry->value = compfunc;
 		}
 	}
-    char lower_file[256];
-	snprintf(lower_file, sizeof(lower_file), "%s", file->path);
-	strtolower(lower_file);
 	hash_table_insert(&compiled_files, lower_file)->value = cf;
+	return cf;
 }
 
 VMFunction *vm_func_lookup(void *ctx, const char *file, const char *function)
@@ -710,8 +723,8 @@ Arena scratch;
 
 void init()
 {
-	// size_t cap = (1 << 29);
-	size_t cap = (1 << 27);
+	size_t cap = (1 << 29);
+	// size_t cap = (1 << 27);
 	if(!heap)
 		heap = malloc(cap);
 	// printf("[INFO] Allocated %.2f MB\n", (float)cap / 1000.f / 1000.f);
@@ -766,12 +779,10 @@ int execute(const char *source, bool verbose)
 	// interp.jmp = &jmp;
 	void ast_visitor_gsc_init(ASTVisitor *v);
 	compiler_init(&compiler, &jmp, &perm_allocator, &strtab);
-
-	static const char *base_path = "scripts/";
 	
 	program = new(&scratch, ASTProgram, 1);
 	program->allocator = &scratch_allocator;
-	snprintf(program->base_path, sizeof(program->base_path), "%s", base_path);
+	// snprintf(program->base_path, sizeof(program->base_path), "%s", base_path);
 
 	hash_table_init(&program->files, 10, &scratch_allocator);
 	const char *input_file = "*source";
@@ -828,7 +839,7 @@ int execute(const char *source, bool verbose)
 	}
 }
 
-int execute_file(const char *input_file, bool verbose)
+int execute_file(const char *base_path, const char *input_file, bool verbose)
 {
 	init();
 	
@@ -862,7 +873,6 @@ int execute_file(const char *input_file, bool verbose)
 	compiler_init(&compiler, &jmp, &perm_allocator, &strtab);
 	
 	#ifdef DISK
-	static const char *base_path = "scripts/";
 	
 	program = new(&scratch, ASTProgram, 1);
 	program->allocator = &scratch_allocator;

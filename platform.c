@@ -3,7 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 
-int execute_file(const char *input_file, bool verbose);
+int execute_file(const char *base_path, const char *input_file, bool verbose);
 int execute(const char *source, bool verbose);
 
 bool frame(float dt);
@@ -56,12 +56,16 @@ static void parse_opts(int argc, char **argv)
 		}
 	}
 }
+static const char *base_path = "scripts";
+
+void find_gsc_files(const char *dir_path, int depth);
 
 int main(int argc, char **argv)
 {
+	find_gsc_files(base_path, 0);
 	parse_opts(argc, argv);
 #ifndef EMSCRIPTEN
-	int status = execute_file(opts.input_file, opts.verbose);
+	int status = execute_file(base_path, opts.input_file, opts.verbose);
     while(status == 0)
     {
 		float dt = 1.f / 20.f;
