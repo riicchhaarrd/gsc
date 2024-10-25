@@ -1857,15 +1857,15 @@ static bool call_function(VM *vm, Thread *thr, const char *file, const char *fun
 		sf->locals[i].u.ival = 0;
 	}
 	pop_thread(vm, thr); //nargs
-	sf->locals[0] = pop_thread(vm, thr);
-	for(size_t i = 0; i < nargs; ++i)
+	// + 1 for implicit self parameter
+	for(size_t i = 0; i < nargs + 1; ++i)
 	{
 		Variable arg = pop_thread(vm, thr);
 		// decref(vm, &arg);
-		if(i < vmf->parameter_count)
+		if(i < vmf->parameter_count + 1)
 		{
-			size_t local_idx = reversed ? nargs - i - 1 : i;
-			sf->locals[local_idx + 1] = arg;
+			size_t local_idx = reversed ? (nargs + 1) - i - 1 : i;
+			sf->locals[local_idx] = arg;
 		}
 	}
 	sf->file = file;
