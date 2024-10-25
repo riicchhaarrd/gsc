@@ -887,7 +887,15 @@ int execute_file(const char *input_file, bool verbose)
 		ASTFile *f = it->value;
 		if(!f->parsed)
 			continue;
-		compile_file(&perm_allocator, scratch, &compiler, f);
+		CompiledFile *cf = compile_file(&perm_allocator, scratch, &compiler, f);
+		for(Node *include = f->includes; include; include = include->next)
+		{
+			CompiledFile *cfi = compile_file(&perm_allocator, scratch, &compiler, include->data);
+			for(HashTableEntry *cfi_entry = cfi->functions.head; cfi_entry; cfi_entry = cfi_entry->next)
+			{
+				hash_table_insert(&cf->functions, cfi_entry->key)->value = cfi_entry->value;
+			}
+		}
 		printf("%f MB", get_memory_usage_kb() / 1000.f);
 		// getchar();
 	}

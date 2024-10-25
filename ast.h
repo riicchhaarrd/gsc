@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <core/ds/hash_table.h>
 #include <core/allocator.h>
+#include <core/ds/list.h>
 
 typedef struct ASTNode ASTNode;
 typedef ASTNode* ASTNodePtr;
@@ -61,6 +62,7 @@ struct ASTFile
 	bool parsed;
 	char path[256];
 	char *source;
+	Node *includes; // TODO: FIXME reverse order
 };
 
 typedef struct ASTProgram ASTProgram;
