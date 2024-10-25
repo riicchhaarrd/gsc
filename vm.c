@@ -1595,6 +1595,18 @@ void vm_init(VM *vm, Allocator *allocator, StringTable *strtab)
 		object_for_var(&vm->globals[i])->refcount = VM_REFCOUNT_NO_FREE;
 	}
 
+	{
+		Object *level = object_for_var(&vm->globals[VAR_GLOB_LEVEL]); // TODO: FIXME is actually an array
+		Variable empty = vm_create_object(vm);
+		vm_set_object_field(vm, level, "struct", &empty);
+	}
+
+	{
+		Object *anim = object_for_var(&vm->globals[VAR_GLOB_ANIM]);
+		Variable empty = { .type = VAR_BOOLEAN, .u.ival = 0 };
+		vm_set_object_field(vm, anim, "chatInitialized", &empty);
+	}
+
 	// size_t n = 64 * 10000 * 10000;
 	// char *buf = malloc(n); // TODO: free memory
 	// arena_init(&vm->arena, buf, n);
