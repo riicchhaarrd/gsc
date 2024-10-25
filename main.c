@@ -801,7 +801,7 @@ int execute(const char *source, bool verbose)
 	// getchar();
 	
 	VM *vm = perm_allocator.malloc(perm_allocator.ctx, sizeof(VM));
-	vm_init(vm, &perm_allocator);
+	vm_init(vm, &perm_allocator, &strtab);
 	vm->flags = VM_FLAG_NONE;
 	if(verbose)
 		vm->flags |= VM_FLAG_VERBOSE;
@@ -810,7 +810,6 @@ int execute(const char *source, bool verbose)
 	vm->func_lookup = vm_func_lookup;
 	compiler_free(&compiler);
 	hash_table_destroy(&program->files);
-	vm->strings = &strtab;
 
 	void register_c_functions(VM *vm);
 	register_c_functions(vm);
@@ -895,7 +894,7 @@ int execute_file(const char *input_file, bool verbose)
 	// getchar();
 	
 	VM *vm = perm_allocator.malloc(perm_allocator.ctx, sizeof(VM));
-	vm_init(vm, &perm_allocator);
+	vm_init(vm, &perm_allocator, &strtab);
 	vm->flags = VM_FLAG_NONE;
 	if(verbose)
 		vm->flags |= VM_FLAG_VERBOSE;
@@ -904,7 +903,6 @@ int execute_file(const char *input_file, bool verbose)
 	vm->func_lookup = vm_func_lookup;
 	compiler_free(&compiler);
 	hash_table_destroy(&program->files);
-	vm->strings = &strtab;
 
 	void register_c_functions(VM *vm);
 	register_c_functions(vm);

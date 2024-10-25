@@ -3,6 +3,7 @@
 #include "lexer.h"
 #include "ast.h"
 #include <signal.h>
+#include <time.h>
 
 #ifndef MAX
 	#define MAX(A, B) ((A) > (B) ? (A) : (B))
@@ -1554,6 +1555,8 @@ void vm_init(VM *vm, Allocator *allocator)
 {
 	memset(vm, 0, sizeof(vm));
 	vm->allocator = allocator;
+	vm->strings = strtab;
+	vm->random_state = time(0);
 
 	uo_init(&vm->pool.uo, (1 << 16), -1, allocator);
 	// variable_init(&vm->pool.variables, (1 << 19), -1, allocator);
@@ -1688,6 +1691,16 @@ const char *vm_checkstring(VM *vm, int idx)
 		default: vm_error(vm, "Not a string");
 	}
 	return "";
+}
+
+// https://youtu.be/LWFzPP8ZbdU?t=970
+uint32_t vm_random(VM *vm) // xorshift1
+{
+	uint32_t *state = &vm->random_state;
+	*state ^= (*state << 13);
+	*state ^= (*state >> 17);
+	*state ^= (*state << 5);
+	return *state;
 }
 
 void vm_checkvector(VM *vm, int idx, float *outvec)

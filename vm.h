@@ -179,6 +179,7 @@ struct VM
 	// Arena arena;
     Allocator *allocator;
 	Arena c_function_arena;
+    uint32_t random_state; // xorshift1 state
 
     // Memory pools
     struct
@@ -206,7 +207,7 @@ struct VM
 void vm_call_function_thread(VM *vm, const char *file, const char *function, size_t nargs, Variable *self);
 // bool vm_run(VM *vm, float dt);
 bool vm_run_threads(VM *vm, float dt);
-void vm_init(VM *, Allocator *);
+void vm_init(VM *vm, Allocator *allocator, StringTable *strtab);
 void vm_cleanup(VM*);
 void vm_register_c_function(VM *vm, const char *name, vm_CFunction callback);
 void vm_register_c_method(VM *vm, const char *name, vm_CMethod callback);
@@ -221,3 +222,5 @@ void vm_print_thread_info(VM *vm);
 void vm_notify(VM *vm, Object *object, const char *key, size_t nargs);
 void vm_error(VM *vm, const char *fmt, ...);
 // Variable* vm_dup(VM *vm, Variable* v);
+ObjectField *vm_set_object_field(VM *vm, Object *o, const char *key, Variable *value);
+uint32_t vm_random(VM *vm);
