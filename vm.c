@@ -1651,6 +1651,8 @@ const char *vm_checkstring(VM *vm, int idx)
 		}
 		break;
 		case VAR_UNDEFINED: return "undefined";
+		// case VAR_BOOLEAN: return arg->u.ival ? "true" : "false";
+		case VAR_BOOLEAN: return arg->u.ival ? "1" : "0";
 		case VAR_INTEGER:
 		{
 			char *str = new(&vm->c_function_arena, char, 32);
