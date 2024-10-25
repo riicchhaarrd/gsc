@@ -601,7 +601,8 @@ const char *vm_stringify(VM *vm, Variable *v, char *buf, size_t n)
 	switch(v->type)
 	{
 		case VAR_UNDEFINED: return "undefined";
-		case VAR_BOOLEAN: return v->u.ival == 0 ? "false" : "true";
+		case VAR_BOOLEAN: return v->u.ival == 0 ? "0" : "1";
+		// case VAR_BOOLEAN: return v->u.ival == 0 ? "false" : "true";
 		case VAR_FLOAT: snprintf(buf, n, "%.2f", v->u.fval); return buf;
 		case VAR_INTEGER: snprintf(buf, n, "%d", v->u.ival); return buf;
 		case VAR_LOCALIZED_STRING:
@@ -678,7 +679,7 @@ static Variable unary(VM *vm, Variable *arg, int op)
 			int *b = &result.u.ival;
 			switch(op)
 			{
-				// case '!': *b = !a; break;
+				case '!': *b = !a; break; // if(!array1.size)
 				case '~': *b = ~a; break;
 				case '-': *b = -a; break;
 				case '+': *b = +a; break;
