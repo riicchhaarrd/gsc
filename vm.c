@@ -534,6 +534,7 @@ static void print_operand(VM *vm, Operand *operand, FILE *fp)
 
 static void print_instruction(VM *vm, Instruction *instr, FILE *fp)
 {
+	fprintf(fp, "%s ", opcode_names[instr->opcode]);
 	switch(instr->opcode)
 	{
 		case OP_PUSH:
