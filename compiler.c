@@ -580,7 +580,7 @@ static int define_local_variable(Compiler *c, const char *name, bool is_parm)
 {
 	Allocator allocator = arena_allocator(c->arena);
 	HashTrieNode *entry =
-		hash_trie_upsert(&c->variables, lowercase(c, name), &allocator); // This is OK, Hash Trie doesn't store the allocator
+		hash_trie_upsert(&c->variables, lowercase(c, name), &allocator, false); // This is OK, Hash Trie doesn't store the allocator
 	if(entry->value)
 	{
 		if(is_parm)
@@ -805,7 +805,7 @@ IMPL_VISIT(ASTIdentifier)
 	}
 	if(glob_idx == -1)
 	{
-		HashTrieNode *entry = hash_trie_upsert(&c->variables, lowercase(c, n->name), NULL);
+		HashTrieNode *entry = hash_trie_upsert(&c->variables, lowercase(c, n->name), NULL, false);
 		if(!entry)
 		{
 			error(c, "No variable '%s'", n->name);
