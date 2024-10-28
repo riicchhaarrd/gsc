@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <core/ds/hash_trie.h>
 
 #define OPCODES(X) \
 	X(PUSH)        \
@@ -27,6 +28,7 @@
 	X(UNARY)       \
 	X(VECTOR)      \
 	X(GLOB)
+ // X(SELF)
 
 typedef enum
 {
@@ -104,10 +106,33 @@ typedef struct
 
 #define MAX_OPERANDS (4)
 
-typedef struct
+typedef struct Instruction Instruction;
+struct Instruction
 {
 	int32_t offset;
 	uint8_t opcode;
 	Operand operands[MAX_OPERANDS];
 	int line;
-} Instruction;
+};
+
+enum
+{
+	COMPILE_STATE_NOT_STARTED,
+	COMPILE_STATE_FAILED,
+	COMPILE_STATE_DONE
+};
+
+typedef struct
+{
+	HashTrie functions;
+	HashTrie includes;
+	HashTrie file_references;
+	int state;
+} CompiledFile;
+
+typedef struct
+{
+	Instruction *instructions;
+	size_t parameter_count;
+	size_t local_count;
+} CompiledFunction;

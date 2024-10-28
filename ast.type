@@ -209,7 +209,8 @@ struct SwitchCase
 {
 	public:
 	ASTNodePtr test;
-	ASTNodePtr consequent[?];
+	ASTNodePtr consequent;
+	// ASTNodePtr consequent[?];
 };
 struct SwitchStmt
 {

@@ -151,7 +151,7 @@ IMPL_VISIT(ASTSwitchStmt)
 	visit_node(v, n->discriminant);
 	printf(")\n");
 
-	ASTNode **it = &n->cases;
+	ASTNode **it = (ASTNode **)&n->cases;
 	while(*it)
 	{
 		visit_node(v, *it);
@@ -213,11 +213,11 @@ IMPL_VISIT(ASTLiteral)
 			printf("\"%s\"", n->value.string);
 		}
 		break;
-		case AST_LITERAL_TYPE_ANIMATION:
-		{
-			printf("%%s", n->value.string);
-		}
-		break;
+		// case AST_LITERAL_TYPE_ANIMATION:
+		// {
+		// 	printf("%%s", n->value.string);
+		// }
+		// break;
 		case AST_LITERAL_TYPE_LOCALIZED_STRING:
 		{
 			printf("&\"%s\"", n->value.string);
@@ -255,7 +255,7 @@ IMPL_VISIT(ASTBlockStmt)
 	ASTVisitorContext *ctx = (ASTVisitorContext *)v->ctx;
 	ctx->depth++;
 	indent_printf(v, "{\n");
-	ASTNode **it = &n->body;
+	ASTNode **it = (ASTNode **)&n->body;
 	while(*it)
 	{
 		visit_node(v, *it);

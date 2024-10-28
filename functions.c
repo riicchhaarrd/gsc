@@ -107,7 +107,7 @@ static int print(VM *vm)
 	char buf[1024];
 	for(int i = 0; i < argc; ++i)
 	{
-		char *str = vm_stringify(vm, vm_argv(vm, i), buf, sizeof(buf));
+		const char *str = vm_stringify(vm, vm_argv(vm, i), buf, sizeof(buf));
 		process_escape_sequences(str);
 	}
 	return 0;
@@ -119,7 +119,7 @@ static int println(VM *vm)
 	char buf[1024];
 	for(int i = 0; i < argc; ++i)
 	{
-		char *str = vm_stringify(vm, vm_argv(vm, i), buf, sizeof(buf));
+		const char *str = vm_stringify(vm, vm_argv(vm, i), buf, sizeof(buf));
 		process_escape_sequences(str);
 	}
 	putchar('\n');
@@ -229,7 +229,7 @@ static int getcvar(VM *vm)
 {
 	const char *var = vm_checkstring(vm, 0);
 	HashTrieNode *n = hash_trie_upsert(&fake_vars, var, NULL, false);
-	printf("getcvar %s\n", var);
+	// printf("getcvar %s\n", var);
 	if(n)
 	{
 		vm_pushstring(vm, n->value);
@@ -242,7 +242,7 @@ static int getcvarint(VM *vm)
 {
 	const char *var = vm_checkstring(vm, 0);
 	HashTrieNode *n = hash_trie_upsert(&fake_vars, var, NULL, false);
-	printf("getcvarint %s\n", var);
+	// printf("getcvarint %s\n", var);
 	if(n)
 	{
 		vm_pushinteger(vm, atoi(n->value));
@@ -255,7 +255,7 @@ static int getcvarfloat(VM *vm)
 {
 	const char *var = vm_checkstring(vm, 0);
 	HashTrieNode *n = hash_trie_upsert(&fake_vars, var, NULL, false);
-	printf("getcvarfloat %s\n", var);
+	// printf("getcvarfloat %s\n", var);
 	if(n)
 	{
 		vm_pushfloat(vm, atof(n->value));
@@ -368,6 +368,20 @@ static int isalive(VM *vm)
 	return 1;
 }
 
+static int setmodel(VM *vm, Object *self)
+{
+	Variable str = { .type = VAR_STRING, .u.sval = (char*)vm_checkstring(vm, 0) };
+	vm_set_object_field(vm, self, "model", &str);
+	return 0;
+}
+
+static int giveweapon(VM *vm, Object *self)
+{
+	Variable str = { .type = VAR_STRING, .u.sval = (char*)vm_checkstring(vm, 0) };
+	vm_set_object_field(vm, self, "weapon", &str);
+	return 0;
+}
+
 static int dummy_method(VM *vm, Object *self)
 {
 	return 0;
@@ -421,7 +435,7 @@ static void normalize(float *v)
 		v[k] /= l;
 }
 
-#define M_PI (3.14159)
+// #define M_PI (3.14159)
 #define DEG2RAD ((float)M_PI / 180.f);
 
 static float radians(float f)
@@ -654,7 +668,7 @@ void register_c_functions(VM *vm)
 	vm_register_c_method(vm, "waittill", waittill);
 	vm_register_c_method(vm, "waittillmatch", waittillmatch);
 	vm_register_c_method(vm, "notify", notify);
-	vm_register_c_method(vm, "giveweapon", dummy_method);
+	vm_register_c_method(vm, "giveweapon", giveweapon);
 	vm_register_c_method(vm, "switchtoweapon", dummy_method);
 	vm_register_c_method(vm, "switchtooffhand", dummy_method);
 	vm_register_c_method(vm, "setnormalhealth", dummy_method);
@@ -673,7 +687,7 @@ void register_c_functions(VM *vm)
 	vm_register_c_method(vm, "animscripted", dummy_method);
 	vm_register_c_method(vm, "useanimtree", dummy_method);
 	vm_register_c_method(vm, "setflaggedanim", dummy_method);
-	vm_register_c_method(vm, "setmodel", dummy_method);
+	vm_register_c_method(vm, "setmodel", setmodel);
 	vm_register_c_method(vm, "setorigin", dummy_method);
 	vm_register_c_method(vm, "setplayerangles", dummy_method);
 	vm_register_c_method(vm, "disconnectpaths", dummy_method);

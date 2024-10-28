@@ -5,10 +5,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <setjmp.h>
+#include <core/hash.h>
 
-#ifndef CT_HASH
-	#define CT_HASH(NAME, HASH) (HASH)
-#endif
+// #ifndef CT_HASH
+// 	#define CT_HASH(NAME, HASH) (HASH)
+// #endif
 
 #define IDENTS(X)                                \
 	X(FOR, CT_HASH(for, 0xacf38390))             \

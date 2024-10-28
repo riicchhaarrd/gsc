@@ -31,11 +31,11 @@ static Scope *previous_scope(Compiler *c)
 
 static void print_source(Compiler *c, int offset, int range_min, int range_max)
 {
-	if(!c->file->source || !c->node)
+	if(!c->source || !c->node)
 		return;
 	Stream s = { 0 };
 	StreamBuffer sb = { 0 };
-	init_stream_from_buffer(&s, &sb, c->file->source, strlen(c->file->source) + 1);
+	init_stream_from_buffer(&s, &sb, c->source, strlen(c->source) + 1);
 	Stream *ls = &s;
 	ls->seek(ls, offset + range_min, SEEK_SET);
 	size_t n = range_max - range_min;
@@ -52,12 +52,12 @@ static void print_source(Compiler *c, int offset, int range_min, int range_max)
 
 static int lineno(Compiler *c)
 {
-	if(!c->file->source || !c->node)
+	if(!c->source || !c->node)
 		return -1;
 	size_t n = 1;
-	for(size_t i = 0; i < c->node->offset && c->file->source[i]; ++i)
+	for(size_t i = 0; i < c->node->offset && c->source[i]; ++i)
 	{
-		if(c->file->source[i] == '\n')
+		if(c->source[i] == '\n')
 			++n;
 	}
 	return n;
@@ -96,7 +96,7 @@ static void error(Compiler *c, const char *fmt, ...)
 	va_end(va);
 	if(c->node)
 		print_source(c, c->node->offset, -100, 100);
-	printf("[COMPILER] ERROR: %s at line %d '%s'\n", message, lineno(c), c->file->path);
+	printf("[COMPILER] ERROR: %s at line %d '%s'\n", message, lineno(c), c->path);
 	abort();
 	if(c->jmp)
 		longjmp(*c->jmp, 1);
@@ -393,7 +393,7 @@ IMPL_VISIT(ASTReturnStmt)
 
 IMPL_VISIT(ASTWhileStmt)
 {
-	increment_scope(c, n, NULL);
+	increment_scope(c, (ASTNode*)n, NULL);
 	int loop_begin = ip(c);
 	if(n->test)
 	{
@@ -639,14 +639,14 @@ static void lvalue(Compiler *c, ASTNode *n)
 IMPL_VISIT(ASTSwitchStmt)
 {
 	Scope *prev_scope = previous_scope(c);
-	increment_scope(c, n, prev_scope ? prev_scope->continue_list : NULL);
+	increment_scope(c, (ASTNode*)n, prev_scope ? prev_scope->continue_list : NULL);
 
 	ASTSwitchCase *default_case = NULL;
 	size_t case_jnz[256]; // TODO: increase limit
 	size_t numcases = 0;
 
-	for(ASTSwitchCase *it = n->cases; it; it = ((ASTNode*)it)->next)
-    {
+	for(ASTSwitchCase *it = n->cases; it; it = (ASTSwitchCase *)((ASTNode *)it)->next)
+	{
 		if(((ASTNode *)it)->type != AST_SWITCH_CASE)
 			error(c, "Expected case got '%s'", ast_node_names[((ASTNode *)it)->type]);
 
@@ -673,8 +673,8 @@ IMPL_VISIT(ASTSwitchStmt)
 	
 	numcases = 0;
 
-	for(ASTSwitchCase *it = n->cases; it; it = ((ASTNode*)it)->next)
-    {
+	for(ASTSwitchCase *it = n->cases; it; it = (ASTSwitchCase *)((ASTNode *)it)->next)
+	{
 		if(!it->test)
 		{
 			continue;
@@ -703,7 +703,7 @@ IMPL_VISIT(ASTForStmt)
 		visit(n->init);
 		emit(c, OP_POP);
 	}
-	increment_scope(c, n, NULL);
+	increment_scope(c, (ASTNode*)n, NULL);
 	int loop_begin = ip(c);
 	if(n->test)
 	{
@@ -929,32 +929,19 @@ IMPL_VISIT(ASTCallExpr)
 }
 IMPL_VISIT(ASTExprStmt)
 {
-	debug_info_node(c, n);
+	debug_info_node(c, (ASTNode*)n);
 	visit(n->expression);
 	emit(c, OP_POP);
 }
 IMPL_VISIT(ASTBlockStmt)
 {
-	ASTNode **it = &n->body;
+	ASTNode **it = (ASTNode**)&n->body;
 	while(*it)
 	{
 		// debug_info_node(c, *it);
 		visit(*it);
 		it = &((*it)->next);
 	}
-}
-
-void compiler_init(Compiler *c, jmp_buf *jmp, Allocator *allocator, StringTable *strtab)
-{
-	// c->out = fopen("compiled.gasm", "w");
-	
-	c->strings = strtab;
-
-	c->jmp = jmp;
-}
-
-void compiler_free(Compiler *c)
-{
 }
 
 static void print_instruction(Compiler *c, Instruction *instr)
@@ -995,29 +982,15 @@ IMPL_VISIT(ASTFunction)
 	error(c, "Nested functions are not supported");
 }
 
-#include "vm.h"
-
-VMFunction *compile_function(Compiler *c, ASTFile *file, ASTFunction *n, Arena arena)
+Instruction *compile_function(Compiler *c, Arena *perm, Arena temp, ASTFunction *n, int *local_count)
 {
-	VMFunction *vmf = malloc(sizeof(VMFunction));
-	jmp_buf *prev = c->jmp;
-	jmp_buf jmp;
-	if(setjmp(jmp))
-	{
-		// buf_free(c->instructions);
-		// free(vmf);
-		if(prev)
-			longjmp(*prev, 1);
-		return NULL;
-	}
-	c->arena = &arena;
-	c->variable_index = 0;
 	hash_trie_init(&c->variables);
+	c->arena = &temp;
+	c->variable_index = 0;
 	c->instructions = NULL;
-	c->jmp = &jmp;
 	c->current_scope = 0;
-	vmf->parameter_count = n->parameter_count;
-	debug_info_node(c, n);
+
+	debug_info_node(c, (ASTNode*)n);
 	define_local_variable(c, "self", true);
 	for(ASTNode *it = n->parameters; it; it = it->next)
     {
@@ -1026,12 +999,52 @@ VMFunction *compile_function(Compiler *c, ASTFile *file, ASTFunction *n, Arena a
 		define_local_variable(c, it->ast_identifier_data.name, true);
     }
 	visit(n->body);
-	vmf->local_count = c->variable_index;
 	emit(c, OP_UNDEF);
 	emit(c, OP_RET);
-
-	vmf->instructions = c->instructions;
+	Instruction *instr = c->instructions;
+	*local_count = c->variable_index;
 	c->instructions = NULL;
 	c->arena = NULL;
-	return vmf;
+	return instr;
 }
+
+// #include "vm.h"
+
+// VMFunction *compile_function(Compiler *c, ASTFunction *n, Arena arena)
+// {
+// 	VMFunction *vmf = malloc(sizeof(VMFunction));
+// 	jmp_buf *prev = c->jmp;
+// 	jmp_buf jmp;
+// 	if(setjmp(jmp))
+// 	{
+// 		// buf_free(c->instructions);
+// 		// free(vmf);
+// 		if(prev)
+// 			longjmp(*prev, 1);
+// 		return NULL;
+// 	}
+// 	c->arena = &arena;
+// 	c->variable_index = 0;
+// 	hash_trie_init(&c->variables);
+// 	c->instructions = NULL;
+// 	c->jmp = &jmp;
+// 	c->current_scope = 0;
+// 	vmf->parameter_count = n->parameter_count;
+// 	debug_info_node(c, (ASTNode*)n);
+// 	define_local_variable(c, "self", true);
+// 	for(ASTNode *it = n->parameters; it; it = it->next)
+//     {
+// 		if(it->type != AST_IDENTIFIER)
+// 			error(c, "Expected identifier");
+// 		define_local_variable(c, it->ast_identifier_data.name, true);
+//     }
+// 	visit(n->body);
+// 	vmf->local_count = c->variable_index;
+// 	emit(c, OP_UNDEF);
+// 	emit(c, OP_RET);
+
+// 	vmf->instructions = c->instructions;
+// 	c->instructions = NULL;
+// 	c->arena = NULL;
+// 	return vmf;
+// }

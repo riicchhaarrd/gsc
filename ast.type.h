@@ -216,8 +216,7 @@ typedef struct
 typedef struct
 {
 	ASTNodePtr test;
-	size_t numconsequent;
-	ASTNodePtr *consequent;
+	ASTNodePtr consequent;
 } ASTSwitchCase;
 
 typedef struct
@@ -669,9 +668,9 @@ static size_t ASTSwitchCase_visit(AstVisitor *visitor, const char *key, ASTSwitc
 	{
 		changed_count += visitor->visit_ASTNodePtr(visitor, "test", (ASTNodePtr*)&inst->test, 1, sizeof(inst->test));
 	}
-	if(visitor->pre_visit(visitor, "consequent", 0x125347fa, (void**)&inst->consequent, &inst->numconsequent, sizeof(inst->consequent[0])) && inst->consequent && inst->numconsequent > 0)
+	if(visitor->pre_visit(visitor, "consequent", 0x125347fa, NULL, NULL, sizeof(inst->consequent)))
 	{
-		changed_count += visitor->visit_ASTNodePtr(visitor, "consequent", (ASTNodePtr*)&inst->consequent[0], inst->numconsequent, sizeof(inst->consequent[0]));
+		changed_count += visitor->visit_ASTNodePtr(visitor, "consequent", (ASTNodePtr*)&inst->consequent, 1, sizeof(inst->consequent));
 	}
 	return changed_count;
 }

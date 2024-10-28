@@ -1,8 +1,8 @@
 #pragma once
 #include <stdbool.h>
-#include <core/ds/hash_table.h>
 #include <core/allocator.h>
 #include <core/ds/list.h>
+#include <core/ds/hash_trie.h>
 
 typedef struct ASTNode ASTNode;
 typedef ASTNode* ASTNodePtr;
@@ -55,21 +55,20 @@ struct ASTNode
 	struct ASTNode *next;
 };
 
-typedef struct ASTFile ASTFile;
-struct ASTFile
-{
-	HashTable functions; // ASTFunction
-	bool parsed;
-	char path[256];
-	char *source;
-	Node *includes; // TODO: FIXME reverse order
-};
+// typedef struct ASTFile ASTFile;
+// struct ASTFile
+// {
+// 	HashTrie functions; // ASTFunction
+// 	char path[256];
+// 	// char *source;
+// 	// Node *includes; // TODO: FIXME reverse order
+// };
 
-typedef struct ASTProgram ASTProgram;
-struct ASTProgram
-{
-	Allocator *allocator;
-	HashTable files; // ASTFile
-	char base_path[256];
-	// const char *source;
-};
+// typedef struct ASTProgram ASTProgram;
+// struct ASTProgram
+// {
+// 	Allocator *allocator;
+// 	HashTrie files; // ASTFile
+// 	char base_path[256];
+// 	// const char *source;
+// };

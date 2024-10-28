@@ -215,7 +215,7 @@ static void vm_stacktrace(VM *vm)
     // printf("====== END OF STACK =====\n");
 }
 
-#ifndef COUNT_OF(x)
+#ifndef COUNT_OF
 	#define COUNT_OF(x) (sizeof(x) / sizeof((x)[0]))
 #endif
 
@@ -466,7 +466,7 @@ static void pop_string(VM *vm, char *str, size_t n)
 		case VAR_STRING: snprintf(str, n, "%s", top->u.sval); break;
 		default: vm_error(vm, "'%s' is not a string", variable_type_names[top->type]); break;
 	}
-	decref(vm, &top);
+	decref(vm, top);
 }
 
 static int pop_int(VM *vm)
@@ -477,7 +477,7 @@ static int pop_int(VM *vm)
     if(top->type != VAR_INTEGER && top->type != VAR_BOOLEAN)
 		vm_error(vm, "'%s' is not a integer", variable_type_names[top->type]);
     int i = top->u.ival;
-    decref(vm, &top);
+    decref(vm, top);
     return i;
 }
 
@@ -599,19 +599,20 @@ static VariableType promote_type(VariableType lhs, VariableType rhs)
 
 const char *vm_stringify(VM *vm, Variable *v, char *buf, size_t n)
 {
+	#define fixnan(x) (isnan(x) ? 0.f : (x))
 	switch(v->type)
 	{
 		case VAR_UNDEFINED: return "undefined";
 		case VAR_BOOLEAN: return v->u.ival == 0 ? "0" : "1";
 		// case VAR_BOOLEAN: return v->u.ival == 0 ? "false" : "true";
-		case VAR_FLOAT: snprintf(buf, n, "%.2f", v->u.fval); return buf;
+		case VAR_FLOAT: snprintf(buf, n, "%.2f", fixnan(v->u.fval)); return buf;
 		case VAR_INTEGER: snprintf(buf, n, "%d", v->u.ival); return buf;
 		case VAR_LOCALIZED_STRING:
 		// case VAR_ANIMATION:
 		case VAR_STRING: return v->u.sval;
 		case VAR_OBJECT: return "[object]";
 		case VAR_FUNCTION: return "[function]";
-		case VAR_VECTOR: snprintf(buf, n, "(%.2f, %.2f, %.2f)", v->u.vval[0], v->u.vval[1], v->u.vval[2]); return buf;
+		case VAR_VECTOR: snprintf(buf, n, "(%.2f, %.2f, %.2f)", fixnan(v->u.vval[0]), fixnan(v->u.vval[1]), fixnan(v->u.vval[2])); return buf;
 	}
 	return NULL;
 }
@@ -946,8 +947,8 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 			// TODO: FIXME
 			static char a_buf[4096];
 			static char b_buf[4096];
-			char *a = vm_stringify(vm, lhs, a_buf, sizeof(a_buf));
-			char *b = vm_stringify(vm, rhs, b_buf, sizeof(b_buf));
+			const char *a = vm_stringify(vm, lhs, a_buf, sizeof(a_buf));
+			const char *b = vm_stringify(vm, rhs, b_buf, sizeof(b_buf));
 			switch(op)
 			{
 				case TK_PLUS_ASSIGN:
@@ -1060,6 +1061,17 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 			ASSERT_STACK(0);
 		}
 		break;
+		
+		// case OP_SELF:
+		// {
+		// 	bool as_ref = read_int(vm, ins, 0) > 0;
+		// 	if(as_ref)
+		// 		push(vm, ref(vm, &sf->self));
+		// 	else
+		// 		push(vm, sf->self);
+		// 	ASSERT_STACK(1);
+		// }
+		// break;
 
 		case OP_GLOB:
 		{
@@ -1292,13 +1304,13 @@ static bool execute_instruction(VM *vm, Instruction *ins)
                 case AST_LITERAL_TYPE_STRING:
 				{
 					v.type = VAR_STRING;
-					v.u.sval = string(vm, read_string_index(vm, ins, 1));
+					v.u.sval = (char*)string(vm, read_string_index(vm, ins, 1));
 				}
 				break;
                 case AST_LITERAL_TYPE_LOCALIZED_STRING:
 				{
 					v.type = VAR_LOCALIZED_STRING;
-					v.u.sval = string(vm, read_string_index(vm, ins, 1));
+					v.u.sval = (char*)string(vm, read_string_index(vm, ins, 1));
 				}
 				break;
 				case AST_LITERAL_TYPE_BOOLEAN:
@@ -1894,7 +1906,7 @@ static void call_c_function(VM *vm, const char *namespace, const char *function,
 
 static bool call_function(VM *vm, Thread *thr, const char *file, const char *function, size_t nargs, bool reversed, int call_flags)
 {
-	VMFunction *vmf = vm->func_lookup(vm->ctx, file, function);
+	CompiledFunction *vmf = vm->func_lookup(vm->ctx, file, function);
     if(!vmf)
     {
 		call_c_function(vm, file, function, nargs, call_flags);
@@ -1947,7 +1959,7 @@ static bool call_function(VM *vm, Thread *thr, const char *file, const char *fun
 	return true;
 }
 
-void vm_call_function_thread(VM *vm, const char *file, const char *function, size_t nargs, Variable *self)
+bool vm_call_function_thread(VM *vm, const char *file, const char *function, size_t nargs, Variable *self)
 {
 	vm->thread = object_pool_allocate(&vm->pool.threads);
 	memset(vm->thread, 0, sizeof(Thread));
@@ -1957,9 +1969,10 @@ void vm_call_function_thread(VM *vm, const char *file, const char *function, siz
 	push_thread(vm, vm->thread, integer(vm, nargs));
 	if(self && self->type != VAR_OBJECT)
 		vm_error(vm, "'%s' is not a object", variable_type_names[self->type]);
-	call_function(vm, vm->thread, file, function, nargs, false, 0);
+	bool result = call_function(vm, vm->thread, file, function, nargs, false, 0);
 	add_thread(vm, vm->thread);
 	vm->thread = NULL;
+	return result;
 }
 
 static bool variable_eq(Variable *a, Variable *b)

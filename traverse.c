@@ -35,7 +35,7 @@ static void visit_(ASTNode *n, void *ctx)
 	{                                                       \
 		if(!n)                                              \
 			return;                                         \
-		ctx->callback(n, ctx->ctx);
+		ctx->callback((ASTNode*)n, ctx->ctx);
 #define DEFINE_VISITOR_END() }
 
 DEFINE_VISITOR(ASTFunction)
@@ -152,7 +152,7 @@ DEFINE_VISITOR_END()
 
 DEFINE_VISITOR(ASTBlockStmt)
 {
-    for(ASTNode *it = n->body; it; it = it->next)
+    for(ASTNode *it = (ASTNode*)n->body; it; it = it->next)
     {
         visit(it);
     }
@@ -222,7 +222,7 @@ DEFINE_VISITOR_END()
 
 DEFINE_VISITOR(ASTSwitchStmt)
 {
-    for(ASTNode *it = n->cases; it; it = it->next)
+    for(ASTNode *it = (ASTNode*)n->cases; it; it = it->next)
     {
         visit(it);
     }

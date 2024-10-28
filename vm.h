@@ -146,13 +146,13 @@ typedef struct
 
 enum { sizeof_Thread = sizeof(Thread) };
 
-typedef struct VMFunction VMFunction;
-struct VMFunction
-{
-	Instruction *instructions;
-	size_t parameter_count;
-	size_t local_count;
-};
+// typedef struct VMFunction VMFunction;
+// struct VMFunction
+// {
+// 	Instruction *instructions;
+// 	size_t parameter_count;
+// 	size_t local_count;
+// };
 
 #define VM_REFCOUNT_NO_FREE (0xdeadbeef)
 
@@ -195,7 +195,7 @@ struct VM
     StringTable *strings;
     HashTrie c_functions;
     HashTrie c_methods;
-	VMFunction *(*func_lookup)(void *ctx, const char *file, const char *function);
+	CompiledFunction *(*func_lookup)(void *ctx, const char *file, const char *function);
 };
 
 // typedef struct
@@ -204,7 +204,7 @@ struct VM
 //     VMThreadId thread_id;
 // } VMContext;
 
-void vm_call_function_thread(VM *vm, const char *file, const char *function, size_t nargs, Variable *self);
+bool vm_call_function_thread(VM *vm, const char *file, const char *function, size_t nargs, Variable *self);
 // bool vm_run(VM *vm, float dt);
 bool vm_run_threads(VM *vm, float dt);
 void vm_init(VM *vm, Allocator *allocator, StringTable *strtab);
