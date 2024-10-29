@@ -6,6 +6,7 @@
 #include "vm.h"
 #include "ast.h"
 #include "compiler.h"
+#include <setjmp.h>
 
 #define SMALL_STACK_SIZE (16)
 
@@ -16,7 +17,7 @@ struct gsc_State
 	gsc_CreateOptions options;
 	Allocator allocator;
 	char *heap;
-	Arena arena;
+	Arena perm;
 	Arena temp;
 	// HashTrie c_functions;
 	// HashTrie c_methods;
@@ -31,6 +32,8 @@ struct gsc_State
 	StringTable strtab;
 
 	VM *vm;
+
+	jmp_buf jmp_oom;
 };
 
 CompiledFile *find_or_create_compiled_file(gsc_State *state, const char *path)
@@ -38,8 +41,9 @@ CompiledFile *find_or_create_compiled_file(gsc_State *state, const char *path)
 	HashTrieNode *entry = hash_trie_upsert(&state->files, path, &state->allocator, false);
 	if(!entry->value)
 	{
-		CompiledFile *cf = new(&state->arena, CompiledFile, 1);
+		CompiledFile *cf = new(&state->perm, CompiledFile, 1);
 		cf->state = COMPILE_STATE_NOT_STARTED;
+		cf->name = entry->key;
 		hash_trie_init(&cf->file_references);
 		hash_trie_init(&cf->functions);
 		hash_trie_init(&cf->includes);
@@ -48,15 +52,16 @@ CompiledFile *find_or_create_compiled_file(gsc_State *state, const char *path)
 	return entry->value;
 }
 
-void compile(gsc_State *state, const char *path, const char *data)
+CompiledFile *compile(gsc_State *state, const char *path, const char *data)
 {
 	CompiledFile *cf = find_or_create_compiled_file(state, path);
 	if(cf->state != COMPILE_STATE_NOT_STARTED)
-		return;
-	int status = compile_file(path, data, cf, &state->arena, state->temp, &state->strtab);
+		return cf;
+	int status = compile_file(path, data, cf, &state->perm, state->temp, &state->strtab);
 	cf->state = status == 0 ? COMPILE_STATE_DONE : COMPILE_STATE_FAILED;
 	if(cf->state != COMPILE_STATE_DONE)
-		return;
+		return cf;
+	// printf("%s %s\n", path, cf->name);
 	for(HashTrieNode *it = cf->functions.head; it; it = it->next)
 	{
 		CompiledFunction *f = it->value;
@@ -72,6 +77,7 @@ void compile(gsc_State *state, const char *path, const char *data)
 		// printf("include: '%s'\n", it->key);
 		find_or_create_compiled_file(state, it->key);
 	}
+	return cf;
 }
 
 static int error(gsc_State *state, const char *fmt, ...)
@@ -93,21 +99,25 @@ static int error(gsc_State *state, const char *fmt, ...)
 static void *gsc_malloc(void *ctx, size_t size)
 {
 	gsc_State *state = (gsc_State*)ctx;
-	return state->options.allocate_memory(state->options.userdata, size);
+	return new(&state->perm, char, size);
+	// return state->options.allocate_memory(state->options.userdata, size);
 }
 
 static void gsc_free(void *ctx, void *ptr)
 {
 	gsc_State *state = (gsc_State*)ctx;
-	state->options.free_memory(state->options.userdata, ptr);
+	// state->options.free_memory(state->options.userdata, ptr);
 }
 
 static CompiledFile *get_file(gsc_State *state, const char *file)
 {
 	HashTrieNode *n = hash_trie_upsert(&state->files, file, NULL, false);
-	if(n && n->value)
-		return n->value;
-	return NULL;
+	if(!n)
+		return NULL;
+	CompiledFile *cf = n->value;
+	if(cf->state == COMPILE_STATE_FAILED)
+		return NULL;
+	return cf;
 }
 
 static CompiledFunction *get_function(gsc_State *state, const char *file, const char *function)
@@ -133,6 +143,11 @@ gsc_State *gsc_create(gsc_CreateOptions options)
 	memset(ctx, 0, sizeof(gsc_State));
 	ctx->options = options;
 
+	if(setjmp(&ctx->jmp_oom))
+	{
+		return NULL;
+	}
+
 	ctx->allocator.ctx = ctx;
 	ctx->allocator.malloc = gsc_malloc;
 	ctx->allocator.free = gsc_free;
@@ -142,21 +157,34 @@ gsc_State *gsc_create(gsc_CreateOptions options)
 	// hash_trie_init(&ctx->c_methods);
 
 	// TODO: FIXME
-	size_t n = (1 << 28); // 256 MiB
-	ctx->heap = options.allocate_memory(options.userdata, n);
-	arena_init(&ctx->arena, ctx->heap, n);
-	ctx->temp = arena_split(&ctx->arena, n >>= 2);
+	#define HEAP_SIZE (256 * 1024 * 1024)
+	ctx->heap = options.allocate_memory(options.userdata, HEAP_SIZE);
+	arena_init(&ctx->perm, ctx->heap, HEAP_SIZE);
+	ctx->perm.jmp_oom = &ctx->jmp_oom;
+	
+	#define TEMP_SIZE (64 * 1024 * 1024)
 
-	ctx->strtab_arena = arena_split(&ctx->arena, n >>= 2);
+	arena_init(&ctx->temp, new(&ctx->perm, char, TEMP_SIZE), TEMP_SIZE);
+	ctx->temp.jmp_oom = ctx->perm.jmp_oom;
+
+	#define STRTAB_SIZE (128 * 1024 * 1024)
+	arena_init(&ctx->strtab_arena, new(&ctx->perm, char, STRTAB_SIZE), STRTAB_SIZE);
+	ctx->strtab_arena.jmp_oom = ctx->perm.jmp_oom;
+
 	string_table_init(&ctx->strtab, ctx->strtab_arena);
 
-	VM *vm = options.allocate_memory(options.userdata, sizeof(VM));
+	VM *vm = new(&ctx->perm, VM, 1);
 	vm_init(vm, &ctx->allocator, &ctx->strtab);
 	vm->flags = VM_FLAG_NONE;
-	// vm->flags |= VM_FLAG_VERBOSE;
-	vm->jmp = NULL;
+	if(options.verbose)
+		vm->flags |= VM_FLAG_VERBOSE;
+	vm->jmp = &ctx->jmp_oom;
 	vm->ctx = ctx;
 	vm->func_lookup = vm_func_lookup;
+
+	void register_dummy_c_functions(VM * vm);
+	register_dummy_c_functions(vm);
+
 	ctx->vm = vm;
 	return ctx;
 }
@@ -169,7 +197,7 @@ void gsc_destroy(gsc_State *state)
 
 		gsc_CreateOptions opts = state->options;
 		opts.free_memory(opts.userdata, state->heap);
-		opts.free_memory(opts.userdata, state->vm);
+		// opts.free_memory(opts.userdata, state->vm);
 		opts.free_memory(opts.userdata, state);
 	}
 }
@@ -187,13 +215,52 @@ void gsc_object_set_field(gsc_State *state, gsc_Object *, const char *name)
 {
 }
 
+int gsc_link(gsc_State *state)
+{
+	Allocator perm_allocator = arena_allocator(&state->perm);
+	for(HashTrieNode *it = state->files.head; it; it = it->next)
+	{
+		CompiledFile *cf = it->value;
+		if(cf->state != COMPILE_STATE_DONE)
+			continue;
+		// Go through all includes
+		for(HashTrieNode *include = cf->includes.head; include; include = include->next)
+		{
+			CompiledFile *included = get_file(state, include->key);
+			// If included file failed to compile for any reason, skip
+			if(!included)
+			{
+				continue;
+			}
+			// printf("include->key:%s, include:%x\n", include->key, included);
+			for(HashTrieNode *include_func_it = included->functions.head; include_func_it;
+				include_func_it = include_func_it->next)
+			{
+				// If the file that's including already has a function with this name, don't overwrite it
+				HashTrieNode *fnd = hash_trie_upsert(&cf->functions, include_func_it->key, &perm_allocator, false);
+				if(!fnd->value)
+				{
+					fnd->value = include_func_it->value;
+				}
+			}
+		}
+	}
+	return GSC_OK;
+}
+
 int gsc_compile(gsc_State *state, const char *filename)
 {
 	int status = GSC_OK;
 	const char *source = state->options.read_file(state->options.userdata, filename, &status);
 	if(status != GSC_OK)
 		return status;
-	compile(state, filename, source);
+	CompiledFile *cf = compile(state, filename, source);
+	switch(cf->state)
+	{
+		case COMPILE_STATE_DONE: return GSC_OK;
+		case COMPILE_STATE_FAILED: return GSC_ERROR;
+		case COMPILE_STATE_NOT_STARTED: return GSC_YIELD;
+	}
 	// while(1)
 	// {
 	// 	bool done = true;
@@ -225,17 +292,39 @@ const char *gsc_next_compile_dependency(gsc_State *state)
 
 int gsc_update(gsc_State *state, int delta_time)
 {
+	// const char **states[] = { [COMPILE_STATE_NOT_STARTED] = "not started",
+	// 						  [COMPILE_STATE_DONE] = "done",
+	// 						  [COMPILE_STATE_FAILED] = "failed" };
+	// for(HashTrieNode *it = state->files.head; it; it = it->next)
+	// {
+	// 	CompiledFile *cf = it->value;
+	// 	printf("file: %s %s, state: %s, %x\n", it->key, cf->name, states[cf->state], it->value);
+	// 	for(HashTrieNode *fit = cf->functions.head; fit; fit = fit->next)
+	// 	{
+	// 		printf("\t%s %s %x\n", it->key, ((CompiledFunction*)fit->value)->name, fit->value);
+	// 	}
+	// 	// getchar();
+	// }
+	// // getchar();
 	CHECK_ERROR(state);
 	float dt = 1.f / (float)delta_time;
+	if(setjmp(state->jmp_oom))
+	{
+		return GSC_ERROR;
+	}
 	if(!vm_run_threads(state->vm, dt))
-		return GSC_DONE;
-	return GSC_OK;
+		return GSC_OK;
+	return GSC_YIELD;
 }
 
 int gsc_call(gsc_State *state, const char *namespace, const char *function, int nargs)
 {
 	CHECK_ERROR(state);
 	//TODO: handle args
+	if(setjmp(state->jmp_oom))
+	{
+		return GSC_ERROR;
+	}
 	vm_call_function_thread(state->vm, namespace, function, 0, nargs);
 	return GSC_OK; // TODO: FIXME
 }
@@ -279,6 +368,15 @@ float gsc_to_float(gsc_State *state, int index)
 
 const char *gsc_to_string(gsc_State *state, int index)
 {
+	return NULL;
+}
+
+GSC_API void *gsc_get_internal_pointer(gsc_State *state, const char *tag)
+{
+	if(!strcmp(tag, "vm"))
+	{
+		return state->vm;
+	}
 	return NULL;
 }
 

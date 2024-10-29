@@ -2,6 +2,7 @@
 #include <core/io/stream_buffer.h>
 #include "lexer.h"
 #include <core/allocator.h>
+#include <core/arena.h>
 
 typedef struct
 {
@@ -9,23 +10,27 @@ typedef struct
 	Token token;
 	char *string;
 	size_t max_string_length;
-	Allocator *allocator;
+	// Allocator *allocator;
 	char animtree[256];
 	bool verbose;
 	HashTrie *includes;
 	HashTrie *file_references;
+	Arena *perm;
+	Arena *temp;
+	bool generate_debug_info;
 } Parser;
 
 typedef struct ASTNode ASTNode;
 
-#define AST_INIT_NODE(UPPER, TYPE, LOWER)     \
-	static TYPE *init_##TYPE(Parser *parser)  \
-	{                                         \
-		ASTNode *n = malloc(sizeof(ASTNode)); \
-		memset(n, 0, sizeof(ASTNode));        \
-		n->offset = parser->token.offset;     \
-		n->type = UPPER;                      \
-		return (TYPE *)n;                     \
+#define AST_INIT_NODE(UPPER, TYPE, LOWER)           \
+	static TYPE *init_##TYPE(Parser *parser)        \
+	{                                               \
+		ASTNode *n = new(parser->temp, ASTNode, 1); \
+		memset(n, 0, sizeof(ASTNode));              \
+		n->offset = parser->token.offset;           \
+		n->line = parser->lexer->line;               \
+		n->type = UPPER;                            \
+		return (TYPE *)n;                           \
 	}
 
 AST_X_MACRO(AST_INIT_NODE)

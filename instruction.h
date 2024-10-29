@@ -124,6 +124,7 @@ enum
 
 typedef struct
 {
+	const char *name;
 	HashTrie functions;
 	HashTrie includes;
 	HashTrie file_references;
@@ -132,7 +133,11 @@ typedef struct
 
 typedef struct
 {
+	const char *name;
+	CompiledFile *file;
 	Instruction *instructions;
 	size_t parameter_count;
 	size_t local_count;
+	char **variable_names;
+	int line;
 } CompiledFunction;

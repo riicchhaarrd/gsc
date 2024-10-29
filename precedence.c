@@ -59,6 +59,13 @@ static void syntax_error(Parser *parser, const char *fmt, ...)
 	exit(-1);
 }
 
+static void convert_backslash(char *s)
+{
+	for(; *s; s++)
+		if(*s == '\\')
+			*s = '/';
+}
+
 ASTNode *parse_function_name(Parser *parser, Token *t)
 {
 	if(!t)
@@ -84,6 +91,7 @@ ASTNode *parse_function_name(Parser *parser, Token *t)
 	{
 		NODE(FileReference, file_ref);
 		lexer_token_read_string(parser->lexer, t, file_ref->file, sizeof(file_ref->file));
+		convert_backslash(file_ref->file);
 		if(t == &parser->token)
 			advance(parser, TK_FILE_REFERENCE);
 
@@ -137,7 +145,8 @@ ASTNode *call_expression(Parser *parser, ASTNode *callee)
 	// int64_t current = s->tell(s);
 	size_t cap = 32;
 	n->callee = callee;
-	n->arguments = malloc(sizeof(ASTNode*) * cap);
+	n->arguments = new(parser->temp, ASTNode, cap);
+	// n->arguments = malloc(sizeof(ASTNode*) * cap);
 	size_t nargs = 0;
 	if(parser->token.type != ')')
 	{
@@ -409,7 +418,8 @@ ASTNode *nud_group(Parser *parser, Token *token)
 	if(parser->token.type == ',') // Vector
 	{
 		NODE(VectorExpr, vec);
-		vec->elements = malloc(sizeof(ASTNode *) * 3);
+		// vec->elements = malloc(sizeof(ASTNode *) * 3);
+		vec->elements = new(parser->temp, ASTNode, 3);
 		vec->elements[0] = expr;
 		for(size_t i = 1; i < 3; ++i)
 		{

@@ -140,6 +140,7 @@ typedef struct
 	uint32_t flags;
 	FILE *out;
 	void *userptr;
+	int line;
 } Lexer;
 
 LEXER_STATIC void lexer_init(Lexer *l, Stream *stream)
@@ -149,6 +150,7 @@ LEXER_STATIC void lexer_init(Lexer *l, Stream *stream)
 	l->flags = LEXER_FLAG_NONE;
 	l->out = stdout;
 	l->userptr = NULL;
+	l->line = 0;
 }
 
 LEXER_STATIC size_t lexer_token_read_string(Lexer *lexer, Token *t, char *temp, size_t max_temp_size)
@@ -405,7 +407,8 @@ LEXER_STATIC bool cond_single_line_comment_(Token *t, int ch, bool *undo)
 LEXER_STATIC bool cond_whitespace_(Token *t, int ch, bool *undo)
 {
 	*undo = true;
-	return !(ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t');
+	// return !(ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t');
+	return !(ch == '\r' || ch == ' ' || ch == '\t');
 }
 
 LEXER_STATIC bool lexer_step(Lexer *lexer, Token *t);
@@ -605,6 +608,7 @@ repeat:
 			break;
 
 		case '\n':
+			lexer->line++;
 			if(!(lexer->flags & LEXER_FLAG_TOKENIZE_NEWLINES))
 				goto repeat;
 		break;

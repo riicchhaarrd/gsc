@@ -278,8 +278,8 @@ void parse(Parser *parser, const char *path, HashTrie *functions)
 					const char *path = string(parser, TK_FILE_REFERENCE);
 					// printf("path:%s\n", path);
 					// Node *include = malloc(sizeof(Node));
-
-					HashTrieNode *entry = hash_trie_upsert(parser->includes, path, parser->allocator, false);
+					Allocator allocator = arena_allocator(parser->perm);
+					HashTrieNode *entry = hash_trie_upsert(parser->includes, path, &allocator, false);
 					 // TODO: FIXME
 					if(entry)
 					{
@@ -337,7 +337,8 @@ void parse(Parser *parser, const char *path, HashTrie *functions)
 				func->body = block(parser);
 				// visit_node(&visitor, func->body);
 
-				HashTrieNode *entry = hash_trie_upsert(functions, func->name, parser->allocator, false);
+				Allocator allocator = arena_allocator(parser->temp);
+				HashTrieNode *entry = hash_trie_upsert(functions, func->name, &allocator, false);
 				if(entry->value)
 				{
 					lexer_error(parser->lexer, "Function '%s' already defined for '%s'", func->name, path);

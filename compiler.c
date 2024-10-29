@@ -50,29 +50,29 @@ static void print_source(Compiler *c, int offset, int range_min, int range_max)
 	}
 }
 
-static int lineno(Compiler *c)
-{
-	if(!c->source || !c->node)
-		return -1;
-	size_t n = 1;
-	for(size_t i = 0; i < c->node->offset && c->source[i]; ++i)
-	{
-		if(c->source[i] == '\n')
-			++n;
-	}
-	return n;
-}
+// static int lineno(Compiler *c)
+// {
+// 	if(!c->source || !c->node)
+// 		return -1;
+// 	size_t n = 1;
+// 	for(size_t i = 0; i < c->node->offset && c->source[i]; ++i)
+// 	{
+// 		if(c->source[i] == '\n')
+// 			++n;
+// 	}
+// 	return n;
+// }
 
 // TODO: FIXME
 // Scans for newlines for almost every Node now
 // cache it and return more accurate line info
 // with more debug info I guess
 
-static void debug_info_node(Compiler *c, ASTNode *n)
-{
-	c->node = n;
-	c->line_number = lineno(c);
-}
+// static void debug_info_node(Compiler *c, ASTNode *n)
+// {
+// 	c->node = n;
+// 	c->line_number = lineno(c);
+// }
 
 static void strtolower(char *str)
 {
@@ -96,7 +96,7 @@ static void error(Compiler *c, const char *fmt, ...)
 	va_end(va);
 	if(c->node)
 		print_source(c, c->node->offset, -100, 100);
-	printf("[COMPILER] ERROR: %s at line %d '%s'\n", message, lineno(c), c->path);
+	printf("[COMPILER] ERROR: %s at line %d '%s'\n", message, c->node->line, c->path);
 	abort();
 	if(c->jmp)
 		longjmp(*c->jmp, 1);
@@ -121,7 +121,7 @@ static Operand NONE = { .type = OPERAND_TYPE_NONE };
 
 static size_t emit(Compiler *c, Opcode op)
 {
-	Instruction instr = { .opcode = op, .offset = buf_size(c->instructions), .line = c->line_number };
+	Instruction instr = { .opcode = op, .offset = buf_size(c->instructions), .line = c->node->line };
 	buf_push(c->instructions, instr);
 	return buf_size(c->instructions) - 1;
 }
@@ -929,7 +929,8 @@ IMPL_VISIT(ASTCallExpr)
 }
 IMPL_VISIT(ASTExprStmt)
 {
-	debug_info_node(c, (ASTNode*)n);
+	c->node = (ASTNode*)n;
+	// debug_info_node(c, (ASTNode*)n);
 	visit(n->expression);
 	emit(c, OP_POP);
 }
@@ -938,6 +939,7 @@ IMPL_VISIT(ASTBlockStmt)
 	ASTNode **it = (ASTNode**)&n->body;
 	while(*it)
 	{
+		c->node = (ASTNode*)*it;
 		// debug_info_node(c, *it);
 		visit(*it);
 		it = &((*it)->next);
@@ -982,7 +984,7 @@ IMPL_VISIT(ASTFunction)
 	error(c, "Nested functions are not supported");
 }
 
-Instruction *compile_function(Compiler *c, Arena *perm, Arena temp, ASTFunction *n, int *local_count)
+Instruction *compile_function(Compiler *c, Arena *perm, Arena temp, ASTFunction *n, int *local_count, CompiledFunction *cf)
 {
 	hash_trie_init(&c->variables);
 	c->arena = &temp;
@@ -990,7 +992,9 @@ Instruction *compile_function(Compiler *c, Arena *perm, Arena temp, ASTFunction 
 	c->instructions = NULL;
 	c->current_scope = 0;
 
-	debug_info_node(c, (ASTNode*)n);
+	// debug_info_node(c, (ASTNode*)n);
+	c->node = (ASTNode*)n;
+	cf->line = c->node->line;
 	define_local_variable(c, "self", true);
 	for(ASTNode *it = n->parameters; it; it = it->next)
     {
@@ -1003,6 +1007,15 @@ Instruction *compile_function(Compiler *c, Arena *perm, Arena temp, ASTFunction 
 	emit(c, OP_RET);
 	Instruction *instr = c->instructions;
 	*local_count = c->variable_index;
+	cf->variable_names = new(perm, char*, c->variable_index);
+	size_t idx = 0;
+	for(HashTrieNode *it = c->variables.head; it; it = it->next)
+	{
+		size_t len = strlen(it->key) + 1;
+		char *str = new(perm, char, len);
+		memcpy(str, it->key, len);
+		cf->variable_names[idx++] = str;
+	}
 	c->instructions = NULL;
 	c->arena = NULL;
 	return instr;

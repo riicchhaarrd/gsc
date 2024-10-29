@@ -18,7 +18,7 @@ extern "C"
 	#define GSC_OK (0)
 	#define GSC_ERROR (1)
 	#define GSC_NOT_FOUND (2)
-	#define GSC_DONE (3)
+	// #define GSC_DONE (3)
 	#define GSC_YIELD (4)
 
 	typedef struct gsc_State gsc_State;
@@ -28,22 +28,24 @@ extern "C"
 		void (*free_memory)(void *ctx, void *ptr);								// Free previously allocated memory
 		const char *(*read_file)(void *ctx, const char *filename, int *status); // Read file and return status
 		void *userdata;															// User-defined data pointer
+		int verbose;
 	} gsc_CreateOptions;
 
 	GSC_API gsc_State *gsc_create(gsc_CreateOptions options);
 	GSC_API void gsc_destroy(gsc_State *state);
 	
+	GSC_API int gsc_link(gsc_State *state);
 	GSC_API int gsc_compile(gsc_State *state, const char *filename);
 	GSC_API const char *gsc_next_compile_dependency(gsc_State *state);
 
 	GSC_API int gsc_update(gsc_State *state, int delta_time);
-	GSC_API int gsc_call(gsc_State *state, const char *namespace, const char *function, int nargs);
+	GSC_API int gsc_call(gsc_State *state, const char *file, const char *function, int nargs);
 
 	typedef int (*gsc_Function)(gsc_State *);
 	typedef struct gsc_Object gsc_Object;
 	typedef int (*gsc_Method)(gsc_State *, gsc_Object *);
-	GSC_API void gsc_register_function(gsc_State *state, const char *namespace, const char *name, gsc_Function);
-	GSC_API void gsc_register_method(gsc_State *state, const char *namespace, const char *name, gsc_Method);
+	GSC_API void gsc_register_function(gsc_State *state, const char *file, const char *name, gsc_Function);
+	GSC_API void gsc_register_method(gsc_State *state, const char *file, const char *name, gsc_Method);
 
 	GSC_API void gsc_object_set_field(gsc_State *state, gsc_Object *, const char *name);
 
@@ -59,6 +61,9 @@ extern "C"
 	GSC_API int gsc_to_int(gsc_State *state, int index);
 	GSC_API float gsc_to_float(gsc_State *state, int index);
 	GSC_API const char *gsc_to_string(gsc_State *state, int index);
+
+	// This function may break
+	GSC_API void *gsc_get_internal_pointer(gsc_State *state, const char *tag);
 
 #ifdef __cplusplus
 }

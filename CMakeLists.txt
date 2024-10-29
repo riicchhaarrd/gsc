@@ -17,6 +17,7 @@ else()
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w -O2")
     else()
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w -g -ggdb3")
+        # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w -g -ggdb3 -fsanitize=address -O0 -D_DEBUG")
     endif()
 endif()
 

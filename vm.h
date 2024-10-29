@@ -82,6 +82,7 @@ enum { sizeof_VariableValue = sizeof(VariableValue) };
 // #define VAR_FLAG_NONE (0)
 // #define VAR_FLAG_NO_FREE (1)
 
+#pragma pack(push, 8)
 struct Variable
 {
 	int type;
@@ -90,18 +91,21 @@ struct Variable
 	VariableValue u;
     // Variable *next;
 };
+#pragma pack(pop)
 
 enum { sizeof_Variable = sizeof(Variable) };
 
+#pragma pack(push, 8)
 typedef struct
 {
     Variable *locals;
-    // size_t local_count;
+    int local_count;
     Instruction *instructions;
     const char *file, *function;
     int ip;
     // Variable self;
 } StackFrame;
+#pragma pack(pop)
 enum { sizeof_StackFrame = sizeof(StackFrame) };
 
 typedef struct

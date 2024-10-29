@@ -585,7 +585,7 @@ static int getchar_(VM *vm)
 	return 1;
 }
 
-void register_c_functions(VM *vm)
+void register_dummy_c_functions(VM *vm)
 {
 	hash_trie_init(&fake_vars);
 

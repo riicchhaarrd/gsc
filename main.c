@@ -33,16 +33,18 @@ static bool node_fn(ASTNode *n, void *ctx)
 		return false;
 	Parser *parser = ctx;
 	snprintf(parser->string, parser->max_string_length, "%s", n->ast_file_reference_data.file);
-	for(char *p = parser->string; *p; p++)
-		if(*p == '\\')
-			*p = '/';
-	hash_trie_upsert(parser->file_references, parser->string, parser->allocator, false);
+	// for(char *p = parser->string; *p; p++)
+	// 	if(*p == '\\')
+	// 		*p = '/';
+	Allocator allocator = arena_allocator(parser->perm);
+	hash_trie_upsert(parser->file_references, parser->string, &allocator, false);
 	return false;
 }
 
 int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *perm, Arena scratch, StringTable *strtab)
 {
-	
+	if(!data)
+		return 1;
 	Allocator perm_allocator = arena_allocator(perm);
 	jmp_buf jmp;
 	if(setjmp(jmp))
@@ -81,11 +83,13 @@ int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *pe
 	l.jmp = &jmp;
 	Parser parser = { 0 };
 	parser.verbose = false;
-	Allocator allocator = arena_allocator(&scratch);
-	parser.allocator = &allocator;
+	// Allocator allocator = arena_allocator(&scratch);
+	// parser.allocator = &allocator;
 	parser.string = string;
 	parser.max_string_length = sizeof(string);
 	parser.lexer = &l;
+	parser.perm = perm;
+	parser.temp = &scratch;
 	parser.file_references = &cf->file_references;
 	parser.includes = &cf->includes;
 
@@ -99,19 +103,26 @@ int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *pe
 	{
 		ASTFunction *func = it->value;
 		traverse((ASTNode*)func, node_fn, &parser);
-		Arena temp = scratch;
 		int local_count = 0;
-		Instruction *ins = compile_function(&compiler, perm, temp, func, &local_count);
+		CompiledFunction *compfunc = new(perm, CompiledFunction, 1);
+		compfunc->file = cf;
+		compfunc->parameter_count = func->parameter_count;
+		Instruction *ins = compile_function(&compiler, perm, scratch, func, &local_count, compfunc);
 		if(!ins)
 		{
 			return 1;
 		}
-		CompiledFunction *compfunc = new(perm, CompiledFunction, 1);
-		compfunc->parameter_count = func->parameter_count;
 		compfunc->local_count = local_count;
 		compfunc->instructions = ins;
-		hash_trie_upsert(&cf->functions, func->name, &perm_allocator, false)->value = compfunc;
+		HashTrieNode *entry = hash_trie_upsert(&cf->functions, func->name, &perm_allocator, false);
+		entry->value = compfunc;
+		compfunc->name = entry->key;
 	}
+	// for(HashTrieNode *it = cf->includes.head; it; it = it->next)
+	// {
+	// 	printf("INCLUDE:%s\n", it->key);
+	// 	getchar();
+	// }
 	return 0;
 }
 

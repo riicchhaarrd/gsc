@@ -48,9 +48,9 @@ static Object *object_for_var(Variable *v)
 
 StackFrame *stack_frame(VM *vm, Thread *t)
 {
-	if(t->bp == -1)
+	if(t->bp < 0)
 		vm_error(vm, "No stack frame for thread");
-	return &t->frames[t->bp - 1];
+	return &t->frames[t->bp];
 }
 
 static void free_object(VM *vm, Object *o)
@@ -94,13 +94,13 @@ static void print_callstack(Thread *thr)
 	{
 		printf("\t(internal)\n");
 	}
-	if(thr->bp - 1 <= 0)
+	if(thr->bp < 0)
 	{
 		printf("\tNo callstack.\n");
 	}
 	else
 	{
-		for(int i = 0; i < thr->bp - 1; i++)
+		for(int i = 0; i < thr->bp + 1; i++)
 		{
 			StackFrame *prev_sf = &thr->frames[i];
 			printf("\t-> %s::%s\n", prev_sf->file, prev_sf->function);
@@ -113,9 +113,9 @@ static void print_stackframe(Thread *thr)
 {
 
     StackFrame *sf = NULL;
-	if(thr->bp > 0)
+	if(thr->bp >= 0)
 	{
-		sf = &thr->frames[thr->bp - 1];
+		sf = &thr->frames[thr->bp];
 	}
 	// printf("========= STACK =========\n");
 	if(sf)
@@ -140,6 +140,28 @@ int thread_count(VM *vm)
 		return vm->thread_write_idx - vm->thread_read_idx;
 	}
 	return VM_THREAD_POOL_SIZE - (vm->thread_read_idx - vm->thread_write_idx);
+}
+
+#pragma pack(push, 8)
+typedef struct
+{
+	int index;
+	int state;
+	StackFrame *frames;
+	int bp;
+} ThreadDebugInfo_;
+#pragma pack(pop)
+
+int get_thread_info_(VM *vm, ThreadDebugInfo_ *info, int i)
+{
+	if(vm->thread_read_idx == vm->thread_write_idx)
+		return 0; // No threads
+	Thread *t = vm->thread_buffer[(vm->thread_read_idx + i) % VM_THREAD_POOL_SIZE];
+	info->frames = t->frames;
+	info->bp = t->bp;
+	info->index = i;
+	info->state = t->state;
+	return 1;
 }
 
 void vm_print_thread_info(VM *vm)
@@ -223,8 +245,8 @@ void vm_error(VM *vm, const char *fmt, ...)
 {
     Thread *thr = vm->thread;
     StackFrame *sf = NULL;
-	if(thr->bp > 0)
-		sf = &thr->frames[thr->bp - 1];
+	if(thr->bp >= 0)
+		sf = &thr->frames[thr->bp];
 	Instruction *current = sf && sf->instructions ? &sf->instructions[sf->ip > 0 ? sf->ip - 1 : 0] : NULL;
 	char message[2048];
 	va_list va;
@@ -1437,7 +1459,9 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 				// object = pop_ref(vm);
 			}
             int nargs = cast_int(vm, top(vm, 0));
-            info(vm, "CALLING -> %s::%s %d\n", file, function, nargs);
+			if(!file)
+				file = sf->file;
+			info(vm, "CALLING -> %s::%s %d\n", file, function, nargs);
 
 			if(call_flags & VM_CALL_FLAG_THREADED)
 			{
@@ -1454,7 +1478,7 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 				}
 				push_thread(vm, thr, undef); // return value for caller thread
 				push_thread(vm, nt, integer(vm, nargs));
-				call_function(vm, nt, file ? file : sf->file, function, nargs, true, call_flags);
+				call_function(vm, nt, file, function, nargs, true, call_flags);
 				nt->caller.file = sf->file;
 				nt->caller.function = sf->function;
 				add_thread(vm, nt);
@@ -1465,7 +1489,7 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 			{
 				if(++thr->bp >= VM_FRAME_SIZE)
 					vm_error(vm, "thr->bp >= VM_FRAME_SIZE");
-				if(!call_function(vm, thr, file ? file : sf->file, function, nargs, false, call_flags))
+				if(!call_function(vm, thr, file, function, nargs, false, call_flags))
 					thr->bp--;
 			}
 			// ASSERT_STACK(-nargs);
@@ -1837,7 +1861,6 @@ void vm_pushfloat(VM *vm, float val)
     push(vm, v);
 }
 
-
 void vm_pushbool(VM *vm, bool b)
 {
     Variable v = var(vm);
@@ -1904,6 +1927,54 @@ static void call_c_function(VM *vm, const char *namespace, const char *function,
 	vm->c_function_arena = rollback;
 }
 
+void vm_serialize_variable(VM *vm, Stream *s, Variable *v)
+{
+    if(v->type != VAR_OBJECT)
+    {
+        char buf[256];
+        vm_stringify(vm, v, buf, sizeof(buf));
+		// if(v->type == VAR_STRING)
+			stream_printf(s, "%s", buf);
+		// else
+		// 	stream_printf(s, "%s", buf);
+	} else
+    {
+        Object *o = v->u.oval;
+        stream_printf(s, "{");
+        size_t n = o->field_count;
+        size_t i = 0;
+        for(ObjectField *it = o->fields; it; it = it->next)
+        {
+            stream_printf(s, "%s: ", it->key);
+            vm_serialize_variable(vm, s, it->value);
+            if(i++ < n - 1)
+            stream_printf(s, ",");
+        }
+        stream_printf(s, "}");
+    }
+}
+
+const char *variable_type_name(Variable *v)
+{
+	return variable_type_names[v->type];
+}
+
+int vm_line_number_for_function(VM *vm, const char *file, const char *function)
+{
+	CompiledFunction *vmf = vm->func_lookup(vm->ctx, file, function);
+	if(!vmf)
+		return -1;
+	return vmf->line;
+}
+
+const char *vm_stack_frame_variable_name(VM *vm, StackFrame *sf, int index)
+{
+	CompiledFunction *vmf = vm->func_lookup(vm->ctx, sf->file, sf->function);
+	if(!vmf)
+		return NULL;
+	return vmf->variable_names[index];
+}
+
 static bool call_function(VM *vm, Thread *thr, const char *file, const char *function, size_t nargs, bool reversed, int call_flags)
 {
 	CompiledFunction *vmf = vm->func_lookup(vm->ctx, file, function);
@@ -1927,6 +1998,7 @@ static bool call_function(VM *vm, Thread *thr, const char *file, const char *fun
 	// sf->self.u.oval = self ? self : prev_self;
 	// sf->local_count = vmf->local_count;
 	// sf->locals = new(&vm->arena, Variable, vmf->local_count);
+	sf->local_count = vmf->local_count;
 	for(size_t i = 0; i < vmf->local_count; ++i)
 	{
 		buf_push(sf->locals, (Variable) { 0 });
@@ -2029,8 +2101,8 @@ bool vm_run_threads(VM *vm, float dt)
 		if(!t)
 			break;
 		StackFrame *sf = NULL;
-		if(t->bp != -1)
-			sf = &t->frames[t->bp - 1];
+		if(t->bp >= 0)
+			sf = &t->frames[t->bp];
 		// printf("Processing thread %s::%s (%s)\n", sf ? sf->file : "?", sf ? sf->function : "?", vm_thread_state_names[t->state]);
 		// getchar();
 		for(size_t j = 0; j < vm->event_count; j++)
