@@ -8,16 +8,17 @@
 #ifndef MAX
 	#define MAX(A, B) ((A) > (B) ? (A) : (B))
 #endif
-enum
-{
-	UNION_OBJECT_SIZE =
-		MAX(1, MAX(1, MAX(sizeof_ObjectField, MAX(sizeof_Variable, sizeof_Object))))
-	// sizeof_Unit =
-	// 	MAX(sizeof_Thread, MAX(sizeof_StackFrame, MAX(sizeof_ObjectField, MAX(sizeof_Variable, sizeof_Object))))
-};
+// enum
+// {
+// 	UNION_OBJECT_SIZE =
+// 		MAX(1, MAX(1, MAX(sizeof_ObjectField, MAX(sizeof_Variable, sizeof_Object))))
+// 	// sizeof_Unit =
+// 	// 	MAX(sizeof_Thread, MAX(sizeof_StackFrame, MAX(sizeof_ObjectField, MAX(sizeof_Variable, sizeof_Object))))
+// };
 typedef struct
 {
-	char data[UNION_OBJECT_SIZE];
+	// char data[UNION_OBJECT_SIZE];
+	char data[64]; // 64 so we can allocate small strings too
 } UnionObject;
 
 DEFINE_OBJECT_POOL(thread, Thread)
@@ -81,6 +82,48 @@ static const char *string(VM *vm, size_t idx)
 int vm_string_index(VM *vm, const char *s)
 {
 	return string_table_intern(vm->strings, s);
+}
+
+static bool variable_is_string(Variable *v)
+{
+	return v->type == VAR_STRING || v->type == VAR_INTERNED_STRING;// || v->type == VAR_LOCALIZED_STRING;
+}
+
+static const char *variable_string(VM *vm, Variable *v)
+{
+	switch(v->type)
+	{
+		default: vm_error(vm, "Not a string");
+		case VAR_STRING: return (const char *)v->u.sval.data;
+		case VAR_INTERNED_STRING: return string(vm, v->u.ival);
+	}
+	return NULL;
+}
+
+Variable vm_intern_string_variable(VM *vm, const char *str)
+{
+	Variable v;
+	v.type = VAR_INTERNED_STRING;
+	v.u.ival = vm_string_index(vm, str);
+	return v;
+}
+
+VariableString allocate_variable_string(VM *vm, int len) // len is including \0
+{
+	// if(len == -1)
+	// 	len = strlen(str) + 1;
+	char *ptr = NULL;
+	if(len <= 64)
+	{
+		ptr = (char *)object_pool_allocate(&vm->pool.uo);
+	}
+	else
+	{
+		vm_error(vm, "No malloc!");
+		// ptr = (char *)malloc(len);
+	}
+	// memcpy(ptr, str, len);
+	return (VariableString) { .data = ptr, .length = len };
 }
 
 static void print_callstack(Thread *thr)
@@ -284,7 +327,7 @@ static void print_locals(VM *vm)
 	StackFrame *sf = stack_frame(vm, thr);
 	printf(" || Local variables ||\n");
 	char str[1024];
-	for(size_t i = 0; i < buf_size(sf->locals); ++i)
+	for(size_t i = 1; i < buf_size(sf->locals); ++i)
 	{
 		Variable *lv = local(vm, i);
 		if(lv->type == VAR_UNDEFINED)
@@ -349,7 +392,15 @@ static void free_var(VM *vm, Variable *v)
 	{
 		case VAR_STRING:
 		{
-			free(v->u.sval);
+			if(v->u.sval.length <= 64)
+			{
+				object_pool_deallocate(&vm->pool.uo, v->u.sval.data);
+			} else
+			{
+				vm_error(vm, "No free!");
+				free(v->u.sval.data);
+			}
+			v->u.sval.length = 0;
 		}
 		break;
 
@@ -485,7 +536,8 @@ static void pop_string(VM *vm, char *str, size_t n)
 
 		case VAR_INTEGER: snprintf(str, n, "%d", top->u.ival); break;
 		case VAR_FLOAT: snprintf(str, n, "%f", top->u.fval); break;
-		case VAR_STRING: snprintf(str, n, "%s", top->u.sval); break;
+		case VAR_INTERNED_STRING:
+		case VAR_STRING: snprintf(str, n, "%s", variable_string(vm, top)); break;
 		default: vm_error(vm, "'%s' is not a string", variable_type_names[top->type]); break;
 	}
 	decref(vm, top);
@@ -564,8 +616,7 @@ static void print_instruction(VM *vm, Instruction *instr, FILE *fp)
 		{
 			static const char *_[] = {
 
-				"STRING",	 "INTEGER",	 "BOOLEAN",			 "FLOAT",	 "VECTOR",
-				"FUNCTION", "LOCALIZED_STRING", "UNDEFINED"
+				"STRING", "INTEGER", "BOOLEAN", "FLOAT", "FUNCTION", "LOCALIZED_STRING", "UNDEFINED", NULL
 			};
 			fprintf(fp, "%s ", _[instr->operands[0].value.integer]);
 			if(instr->operands[0].value.integer == AST_LITERAL_TYPE_STRING)
@@ -629,9 +680,9 @@ const char *vm_stringify(VM *vm, Variable *v, char *buf, size_t n)
 		// case VAR_BOOLEAN: return v->u.ival == 0 ? "false" : "true";
 		case VAR_FLOAT: snprintf(buf, n, "%.2f", fixnan(v->u.fval)); return buf;
 		case VAR_INTEGER: snprintf(buf, n, "%d", v->u.ival); return buf;
-		case VAR_LOCALIZED_STRING:
 		// case VAR_ANIMATION:
-		case VAR_STRING: return v->u.sval;
+		case VAR_INTERNED_STRING:
+		case VAR_STRING: return variable_string(vm, v);
 		case VAR_OBJECT: return "[object]";
 		case VAR_FUNCTION: return "[function]";
 		case VAR_VECTOR: snprintf(buf, n, "(%.2f, %.2f, %.2f)", fixnan(v->u.vval[0]), fixnan(v->u.vval[1]), fixnan(v->u.vval[2])); return buf;
@@ -647,7 +698,8 @@ static Variable coerce_int(VM *vm, Variable *v)
 		case VAR_BOOLEAN:
 		case VAR_INTEGER: result = *v; break;
 		case VAR_FLOAT: result.u.ival = (int)v->u.fval; break;
-		case VAR_STRING: result.u.ival = atoi(v->u.sval); break;
+		case VAR_INTERNED_STRING:
+		case VAR_STRING: result.u.ival = atoi(variable_string(vm, v)); break;
 		default: vm_error(vm, "Cannot coerce '%s' to integer", variable_type_names[v->type]); break;
 	}
 	return result;
@@ -673,7 +725,8 @@ static Variable coerce_float(VM *vm, Variable *v)
 	{
 		case VAR_INTEGER: result.u.fval = (float)v->u.ival; break;
 		case VAR_FLOAT: result = *v; break;
-		case VAR_STRING: result.u.fval = atof(v->u.sval); break;
+		case VAR_INTERNED_STRING:
+		case VAR_STRING: result.u.fval = atof(variable_string(vm, v)); break;
 		default: vm_error(vm, "Cannot coerce '%s' to float", variable_type_names[v->type]); break;
 	}
 	return result;
@@ -964,6 +1017,7 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 			}
 		}
 		break;
+		case VAR_INTERNED_STRING:
 		case VAR_STRING:
 		{
 			// TODO: FIXME
@@ -977,10 +1031,11 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 				case '+':
 				{
 					size_t n = strlen(a) + strlen(b) + 1;
-					char *str = malloc(n);
-					snprintf(str, n, "%s%s", a, b);
-
-					result.u.sval = str;
+					VariableString vs = allocate_variable_string(vm, n);
+					// char *str = malloc(n);
+					snprintf(vs.data, n, "%s%s", a, b);
+					result.type = VAR_STRING;
+					result.u.sval = vs;
 				}
 				break;
 				case TK_EQUAL:
@@ -1151,11 +1206,12 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 			} else if(obj.type == VAR_STRING)
 			{
 				Variable key = pop(vm);
-				const char *str = obj.u.sval;
+				const char *str = variable_string(vm, &obj);
 				size_t n = strlen(str);
-				if(key.type == VAR_STRING)
+				if( variable_is_string(&key))
 				{
-					if(!strcmp(key.u.sval, "length") || !strcmp(key.u.sval, "size"))
+					const char *keystr = variable_string(vm, &key);
+					if(!strcmp(keystr, "length") || !strcmp(keystr, "size")) // TODO: optimize?
 					{
 						vm_pushinteger(vm, n);
 					} else
@@ -1325,14 +1381,14 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 				// break;
                 case AST_LITERAL_TYPE_STRING:
 				{
-					v.type = VAR_STRING;
-					v.u.sval = (char*)string(vm, read_string_index(vm, ins, 1));
+					v.type = VAR_INTERNED_STRING;
+					v.u.ival = read_string_index(vm, ins, 1);
 				}
 				break;
                 case AST_LITERAL_TYPE_LOCALIZED_STRING:
 				{
-					v.type = VAR_LOCALIZED_STRING;
-					v.u.sval = (char*)string(vm, read_string_index(vm, ins, 1));
+					v.type = VAR_INTERNED_STRING;
+					v.u.ival = read_string_index(vm, ins, 1);
 				}
 				break;
 				case AST_LITERAL_TYPE_BOOLEAN:
@@ -1516,6 +1572,8 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 	}
 	if(vm->flags & VM_FLAG_VERBOSE)
 	{
+		// print_locals(vm);
+		// print_globals(vm);
 		vm_stacktrace(vm);
 		// vm_print_thread_info(vm);
 		// getchar();
@@ -1723,7 +1781,8 @@ const char *vm_checkstring(VM *vm, int idx)
 	Variable *arg = vm_argv(vm, idx);
 	switch(arg->type)
 	{
-		case VAR_STRING: return arg->u.sval;
+		case VAR_INTERNED_STRING:
+		case VAR_STRING: return variable_string(vm, arg);
 		case VAR_FLOAT:
 		{
 			char *str = new(&vm->c_function_arena, char, 32);
@@ -1800,13 +1859,14 @@ int vm_checkinteger(VM *vm, int idx)
 	return arg->u.ival;
 }
 
-void vm_pushstring_n(VM *vm, const char *str, size_t n)
+void vm_pushstring_n(VM *vm, const char *str, size_t n) // n is without \0
 {
 	Variable v = var(vm);
 	v.type = VAR_STRING;
-	v.u.sval = malloc(n + 1);
-	memcpy(v.u.sval, str, n);
-	v.u.sval[n] = 0;
+	v.u.sval = allocate_variable_string(vm, n + 1);
+	// v.u.sval = malloc(n + 1);
+	memcpy(v.u.sval.data, str, n);
+	v.u.sval.data[n] = 0;
 	push(vm, v);
 }
 
@@ -1814,7 +1874,11 @@ void vm_pushstring(VM *vm, const char *str)
 {
 	Variable v = var(vm);
 	v.type = VAR_STRING;
-	v.u.sval = strdup(str);
+	int n = strlen(str);
+	v.u.sval = allocate_variable_string(vm, n + 1);
+	memcpy(v.u.sval.data, str, n);
+	v.u.sval.data[n] = 0;
+	// v.u.sval = strdup(str);
 	push(vm, v);
 }
 

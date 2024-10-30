@@ -37,7 +37,7 @@ static void string_table_init(StringTable *table, Arena arena)
 {
     ptrdiff_t sz = arena.end - arena.beg;
     // assert(sz > 0 && (sz & (sz - 1) == 0));
-    int h = sz >> 2;
+    int h = sz >> 1;
     arena_init(&table->begin, arena.beg, h);
     arena_init(&table->end, arena.beg + h, h);
     table->begin.jmp_oom = arena.jmp_oom;
@@ -45,6 +45,11 @@ static void string_table_init(StringTable *table, Arena arena)
     
     table->strings = table->begin.beg;
     table->head = NULL;
+}
+
+static float string_table_available_mib(StringTable *table)
+{
+    return arena_available_mib(&table->begin) + arena_available_mib(&table->end);
 }
 
 static const char *string_table_get(StringTable *table, int index)

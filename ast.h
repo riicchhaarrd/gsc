@@ -52,6 +52,7 @@ struct ASTNode
 	};
 	uint32_t type;
 	size_t offset;
+	int line;
 	struct ASTNode *next;
 };
 

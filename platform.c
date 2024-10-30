@@ -145,8 +145,8 @@ int main(int argc, char **argv)
 		return -1;
 	}
 	perm.jmp_oom = &jmp;
-	temp = arena_split(&perm, N >> 2);
-	string_table_init(&strtab, arena_split(&perm, N >> 4));
+	temp = arena_split(&perm, N >> 1);
+	string_table_init(&strtab, arena_split(&perm, N >> 2));
 	char path[256];
 	snprintf(path, sizeof(path), "%s/%s.gsc", base_path, opts.input_file);
 	compile(path, opts.input_file);

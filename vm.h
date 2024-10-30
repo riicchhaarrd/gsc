@@ -61,12 +61,19 @@ enum { sizeof_Object = sizeof(Object) };
 ObjectField *vm_object_upsert(VM *vm, Object *obj, const char *key);
 
 typedef int (*vm_CMethod)(VM *, Object *self);
+
+typedef struct
+{
+    size_t length;
+    char *data;
+} VariableString;
+
 #pragma pack(push, 1)
 typedef union
 {
     int ival;
     float fval;
-    char *sval;
+    VariableString sval;
     Object *oval;
     float vval[3];
     struct
@@ -128,9 +135,10 @@ typedef enum
 static const char *vm_thread_state_names[] = { "INACTIVE",		"ACTIVE",		 "WAITING_TIME",
 											   "WAITING_FRAME", "WAITING_EVENT", NULL };
 
-#define VM_STACK_SIZE (256)
-#define VM_FRAME_SIZE (256)
-#define VM_THREAD_POOL_SIZE (2048)
+#define VM_STACK_SIZE (64)
+#define VM_FRAME_SIZE (16)
+// #define VM_THREAD_POOL_SIZE (2048)
+#define VM_THREAD_POOL_SIZE (256)
 
 typedef struct
 {

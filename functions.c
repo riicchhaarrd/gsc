@@ -368,16 +368,18 @@ static int isalive(VM *vm)
 	return 1;
 }
 
+Variable vm_intern_string_variable(VM *vm, const char *str);
+
 static int setmodel(VM *vm, Object *self)
 {
-	Variable str = { .type = VAR_STRING, .u.sval = (char*)vm_checkstring(vm, 0) };
+	Variable str = vm_intern_string_variable(vm, vm_checkstring(vm, 0));
 	vm_set_object_field(vm, self, "model", &str);
 	return 0;
 }
 
 static int giveweapon(VM *vm, Object *self)
 {
-	Variable str = { .type = VAR_STRING, .u.sval = (char*)vm_checkstring(vm, 0) };
+	Variable str = vm_intern_string_variable(vm, vm_checkstring(vm, 0));
 	vm_set_object_field(vm, self, "weapon", &str);
 	return 0;
 }

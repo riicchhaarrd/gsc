@@ -28,7 +28,7 @@ struct gsc_State
 	bool error;
 	char error_message[2048];
 
-	Arena strtab_arena;
+	// Arena strtab_arena;
 	StringTable strtab;
 
 	VM *vm;
@@ -89,6 +89,12 @@ static int error(gsc_State *state, const char *fmt, ...)
 	va_end(va);
 	return 1;
 }
+
+#define CHECK_OOM(state)          \
+	if(setjmp(state->jmp_oom))    \
+	{                             \
+		return GSC_OUT_OF_MEMORY; \
+	}
 
 #define CHECK_ERROR(state) \
 	if(state->error)       \
@@ -157,21 +163,24 @@ gsc_State *gsc_create(gsc_CreateOptions options)
 	// hash_trie_init(&ctx->c_methods);
 
 	// TODO: FIXME
-	#define HEAP_SIZE (256 * 1024 * 1024)
+	#define HEAP_SIZE (28 * 1024 * 1024)
+	// #define HEAP_SIZE (85 * 1024 * 1024)
+	// #define HEAP_SIZE (83 * 1024 * 1024)
 	ctx->heap = options.allocate_memory(options.userdata, HEAP_SIZE);
 	arena_init(&ctx->perm, ctx->heap, HEAP_SIZE);
 	ctx->perm.jmp_oom = &ctx->jmp_oom;
 	
-	#define TEMP_SIZE (64 * 1024 * 1024)
+	#define TEMP_SIZE (20 * 1024 * 1024)
 
 	arena_init(&ctx->temp, new(&ctx->perm, char, TEMP_SIZE), TEMP_SIZE);
 	ctx->temp.jmp_oom = ctx->perm.jmp_oom;
 
-	#define STRTAB_SIZE (128 * 1024 * 1024)
-	arena_init(&ctx->strtab_arena, new(&ctx->perm, char, STRTAB_SIZE), STRTAB_SIZE);
-	ctx->strtab_arena.jmp_oom = ctx->perm.jmp_oom;
+	#define STRTAB_SIZE (1 * 1024 * 1024)
+	Arena strtab_arena;
+	arena_init(&strtab_arena, new(&ctx->perm, char, STRTAB_SIZE), STRTAB_SIZE);
+	strtab_arena.jmp_oom = ctx->perm.jmp_oom;
 
-	string_table_init(&ctx->strtab, ctx->strtab_arena);
+	string_table_init(&ctx->strtab, strtab_arena);
 
 	VM *vm = new(&ctx->perm, VM, 1);
 	vm_init(vm, &ctx->allocator, &ctx->strtab);
@@ -217,6 +226,7 @@ void gsc_object_set_field(gsc_State *state, gsc_Object *, const char *name)
 
 int gsc_link(gsc_State *state)
 {
+	CHECK_OOM(state);
 	Allocator perm_allocator = arena_allocator(&state->perm);
 	for(HashTrieNode *it = state->files.head; it; it = it->next)
 	{
@@ -254,6 +264,7 @@ int gsc_compile(gsc_State *state, const char *filename)
 	const char *source = state->options.read_file(state->options.userdata, filename, &status);
 	if(status != GSC_OK)
 		return status;
+	CHECK_OOM(state);
 	CompiledFile *cf = compile(state, filename, source);
 	switch(cf->state)
 	{
@@ -290,6 +301,21 @@ const char *gsc_next_compile_dependency(gsc_State *state)
 	return NULL;
 }
 
+static void info(gsc_State *state)
+{
+	printf("[INFO] heap %.2f/%.2f MB available\n",
+		   arena_available_mib(&state->perm),
+		   (float)(HEAP_SIZE - TEMP_SIZE - STRTAB_SIZE) / 1024.f / 1024.f);
+	printf("[INFO] temp %.2f MB\n",
+		   arena_available_mib(&state->temp));
+	printf("[INFO] strings text usage:%.2f, entry usage:%.2f / %.2f MB available\n",
+		   arena_available_mib(&state->strtab.begin),
+		   arena_available_mib(&state->strtab.end),
+		   (float)STRTAB_SIZE / 1024.f / 1024.f);
+	int thread_count(VM * vm);
+	printf("[INFO] %d threads\n", thread_count(state->vm));
+}
+
 int gsc_update(gsc_State *state, int delta_time)
 {
 	// const char **states[] = { [COMPILE_STATE_NOT_STARTED] = "not started",
@@ -308,12 +334,15 @@ int gsc_update(gsc_State *state, int delta_time)
 	// // getchar();
 	CHECK_ERROR(state);
 	float dt = 1.f / (float)delta_time;
-	if(setjmp(state->jmp_oom))
-	{
-		return GSC_ERROR;
-	}
+	CHECK_OOM(state);
 	if(!vm_run_threads(state->vm, dt))
 		return GSC_OK;
+	// static bool once = false;
+	// if(!once)
+	// {
+	// 	info(state);
+	// 	once = true;
+	// }
 	return GSC_YIELD;
 }
 
@@ -321,10 +350,7 @@ int gsc_call(gsc_State *state, const char *namespace, const char *function, int 
 {
 	CHECK_ERROR(state);
 	//TODO: handle args
-	if(setjmp(state->jmp_oom))
-	{
-		return GSC_ERROR;
-	}
+	CHECK_OOM(state);
 	vm_call_function_thread(state->vm, namespace, function, 0, nargs);
 	return GSC_OK; // TODO: FIXME
 }
