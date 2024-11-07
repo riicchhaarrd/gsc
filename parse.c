@@ -36,7 +36,7 @@ static ASTNode *statement(Parser *parser)
 
 		case ';':
 		{
-			advance(parser, ';');
+			advance_if(parser, ';');
 			NODE(EmptyStmt, stmt);
 			n = (ASTNode*)stmt;
 		}
@@ -70,10 +70,10 @@ static ASTNode *statement(Parser *parser)
 			advance(parser, '(');
 			if(parser->token.type != ';')
 				stmt->init = expression(parser);
-			advance(parser, ';');
+			advance_if(parser, ';');
 			if(parser->token.type != ';')
 				stmt->test = expression(parser);
-			advance(parser, ';');
+			advance_if(parser, ';');
 			if(parser->token.type != ')')
 				stmt->update = expression(parser);
 			advance(parser, ')');
@@ -92,7 +92,7 @@ static ASTNode *statement(Parser *parser)
 		// 		lexer_error(parser->lexer, "Expected call expression for thread");
 		// 	}
 		// 	n = (ASTNode*)stmt;
-		// 	advance(parser, ';');
+		// 	advance_if(parser, ';');
 		// }
 		// break;
 
@@ -101,7 +101,7 @@ static ASTNode *statement(Parser *parser)
 			NODE(BreakStmt, stmt);
 			n = (ASTNode*)stmt;
 			advance(parser, TK_BREAK);
-			advance(parser, ';');
+			advance_if(parser, ';');
 		}
 		break;
 		
@@ -111,7 +111,7 @@ static ASTNode *statement(Parser *parser)
 			n = (ASTNode*)stmt;
 			advance(parser, TK_WAIT);
 			stmt->duration = expression(parser);
-			advance(parser, ';');
+			advance_if(parser, ';');
 		}
 		break;
 
@@ -121,7 +121,7 @@ static ASTNode *statement(Parser *parser)
 			n = (ASTNode*)stmt;
 			advance(parser, TK_WAITTILLFRAMEEND);
 			stmt->duration = NULL;
-			advance(parser, ';');
+			advance_if(parser, ';');
 		}
 		break;
 
@@ -130,7 +130,7 @@ static ASTNode *statement(Parser *parser)
 			NODE(ContinueStmt, stmt);
 			n = (ASTNode*)stmt;
 			advance(parser, TK_CONTINUE);
-			advance(parser, ';');
+			advance_if(parser, ';');
 		}
 		break;
 
@@ -187,7 +187,7 @@ static ASTNode *statement(Parser *parser)
 			{
 				stmt->argument = expression(parser); // TODO: can't call a threaded call expr in return, seperate parse_expression and expression functions
 			}
-			advance(parser, ';');
+			advance_if(parser, ';');
 		}
 		break;
 
@@ -213,7 +213,7 @@ static ASTNode *statement(Parser *parser)
 			NODE(ExprStmt, stmt);
 			n = (ASTNode*)stmt;
 			stmt->expression = expression(parser);
-			advance(parser, ';');
+			advance_if(parser, ';');
 		} break;
 	}
 	return n;
@@ -303,7 +303,7 @@ void parse(Parser *parser, const char *path, HashTrie *functions)
 				{
 					syntax_error(parser, "Invalid directive");
 				}
-				advance(parser, ';');
+				advance_if(parser, ';');
 			}
 			break;
             
