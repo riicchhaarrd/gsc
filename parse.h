@@ -66,6 +66,16 @@ static void advance_(Parser *parser, TokenType type, const char *file, int line)
 				temp);
 }
 
+#define advance_if(parser, type) advance_if_(parser, type, FILE_BASENAME, __LINE__)
+static void advance_if_(Parser *parser, TokenType type, const char *file, int line)
+{
+	if(parser->token.type == type)
+	{
+		lexer_step(parser->lexer, &parser->token);
+		return;
+	}
+}
+
 ASTNode *parse_expression(Parser *parser, int precedence);
 ASTNode *expression(Parser *parser);
 void parse(Parser *parser, const char *path, HashTrie *functions);
