@@ -959,7 +959,7 @@ static void print_instruction(Compiler *c, Instruction *instr)
 					printf("%s ", string_table_get(c->strings, instr->operands[i].value.string_index));
 					break;
 				case OPERAND_TYPE_INT:
-					printf("%d ", instr->operands[i].value.integer);
+					printf("%" PRId64" ", instr->operands[i].value.integer);
 				break;
 				case OPERAND_TYPE_FLOAT:
 					printf("%f ", instr->operands[i].value.number);

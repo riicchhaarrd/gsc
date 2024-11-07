@@ -534,7 +534,7 @@ static void pop_string(VM *vm, char *str, size_t n)
 	{
 		// TODO: directly use a hash and memcmp for integer/other type of keys
 
-		case VAR_INTEGER: snprintf(str, n, "%d", top->u.ival); break;
+		case VAR_INTEGER: snprintf(str, n, "%" PRId64, top->u.ival); break;
 		case VAR_FLOAT: snprintf(str, n, "%f", top->u.fval); break;
 		case VAR_INTERNED_STRING:
 		case VAR_STRING: snprintf(str, n, "%s", variable_string(vm, top)); break;
@@ -543,19 +543,19 @@ static void pop_string(VM *vm, char *str, size_t n)
 	decref(vm, top);
 }
 
-static int pop_int(VM *vm)
+static int64_t pop_int(VM *vm)
 {
     Thread *thr = vm->thread;
     StackFrame *sf = stack_frame(vm, thr);
     Variable *top = &thr->stack[--thr->sp];
     if(top->type != VAR_INTEGER && top->type != VAR_BOOLEAN)
 		vm_error(vm, "'%s' is not a integer", variable_type_names[top->type]);
-    int i = top->u.ival;
+    int64_t i = top->u.ival;
     decref(vm, top);
     return i;
 }
 
-static int read_int(VM *vm, Instruction *ins, size_t idx)
+static int64_t read_int(VM *vm, Instruction *ins, size_t idx)
 {
     Operand *op = &ins->operands[idx];
     if(op->type != OPERAND_TYPE_INT)
@@ -679,7 +679,7 @@ const char *vm_stringify(VM *vm, Variable *v, char *buf, size_t n)
 		case VAR_BOOLEAN: return v->u.ival == 0 ? "0" : "1";
 		// case VAR_BOOLEAN: return v->u.ival == 0 ? "false" : "true";
 		case VAR_FLOAT: snprintf(buf, n, "%.2f", fixnan(v->u.fval)); return buf;
-		case VAR_INTEGER: snprintf(buf, n, "%d", v->u.ival); return buf;
+		case VAR_INTEGER: snprintf(buf, n, "%" PRId64, v->u.ival); return buf;
 		// case VAR_ANIMATION:
 		case VAR_INTERNED_STRING:
 		case VAR_STRING: return variable_string(vm, v);
@@ -697,9 +697,9 @@ static Variable coerce_int(VM *vm, Variable *v)
 	{
 		case VAR_BOOLEAN:
 		case VAR_INTEGER: result = *v; break;
-		case VAR_FLOAT: result.u.ival = (int)v->u.fval; break;
+		case VAR_FLOAT: result.u.ival = (int64_t)v->u.fval; break;
 		case VAR_INTERNED_STRING:
-		case VAR_STRING: result.u.ival = atoi(variable_string(vm, v)); break;
+		case VAR_STRING: result.u.ival = strtoll(variable_string(vm, v), NULL, 10); break;
 		default: vm_error(vm, "Cannot coerce '%s' to integer", variable_type_names[v->type]); break;
 	}
 	return result;
@@ -752,8 +752,8 @@ static Variable unary(VM *vm, Variable *arg, int op)
 
 		case VAR_INTEGER:
 		{
-			int a = coerce_int(vm, arg).u.ival;
-			int *b = &result.u.ival;
+			int64_t a = coerce_int(vm, arg).u.ival;
+			int64_t *b = &result.u.ival;
 			switch(op)
 			{
 				case '!': *b = !a; break; // if(!array1.size)
@@ -845,9 +845,9 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 		break;
 		case VAR_INTEGER:
 		{
-			int a = coerce_int(vm, lhs).u.ival;
-			int b = coerce_int(vm, rhs).u.ival;
-			int *c = &result.u.ival;
+			int64_t a = coerce_int(vm, lhs).u.ival;
+			int64_t b = coerce_int(vm, rhs).u.ival;
+			int64_t *c = &result.u.ival;
 			switch(op)
 			{
 				case TK_PLUS_ASSIGN:
@@ -1909,7 +1909,7 @@ Thread *vm_thread(VM *vm)
 	return vm->thread;
 }
 
-void vm_pushinteger(VM *vm, int val)
+void vm_pushinteger(VM *vm, int64_t val)
 {
     Variable v = var(vm);
     v.type = VAR_INTEGER;

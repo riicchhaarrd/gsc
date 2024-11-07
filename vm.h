@@ -18,9 +18,10 @@
 typedef struct VM VM;
 typedef int (*vm_CFunction)(VM *);
 
-int vm_checkinteger(VM*, int);
+int vm_checkobject(VM *vm, int idx);
+int64_t vm_checkinteger(VM *vm, int idx);
 bool vm_checkbool(VM *vm, int idx);
-void vm_pushinteger(VM*, int);
+void vm_pushinteger(VM*, int64_t);
 void vm_pushfloat(VM *vm, float val);
 void vm_pushbool(VM *vm, bool b);
 void vm_pushundefined(VM *vm);
@@ -71,7 +72,7 @@ typedef struct
 #pragma pack(push, 1)
 typedef union
 {
-    int ival;
+    int64_t ival;
     float fval;
     VariableString sval;
     Object *oval;

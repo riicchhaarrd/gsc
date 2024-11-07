@@ -682,16 +682,16 @@ LEXER_STATIC Token lexer_peek(Lexer *lexer)
 	return t;
 }
 
-LEXER_STATIC unsigned long long lexer_token_read_int(Lexer *lexer, Token *t)
+LEXER_STATIC int64_t lexer_token_read_int(Lexer *lexer, Token *t)
 {
 	char str[64];
 	lexer_token_read_string(lexer, t, str, sizeof(str));
 	char *x = strchr(str, 'x');
 	if(x)
 	{
-		return strtoull(x + 1, NULL, 16);
+		return strtoll(x + 1, NULL, 16);
 	}
-	return strtoull(str, NULL, 10);
+	return strtoll(str, NULL, 10);
 }
 
 LEXER_STATIC double lexer_token_read_float(Lexer *lexer, Token *t)
