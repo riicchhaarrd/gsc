@@ -3,6 +3,8 @@
 #include <setjmp.h>
 #include "compiler.h"
 #include "variable.h"
+#include <inttypes.h>
+#include "include/gsc.h"
 
 static void property(Compiler *c, ASTNode *n, int op);
 
@@ -96,10 +98,11 @@ static void error(Compiler *c, const char *fmt, ...)
 	va_end(va);
 	if(c->node)
 		print_source(c, c->node->offset, -100, 100);
-	printf("[COMPILER] ERROR: %s at line %d '%s'\n", message, c->node->line, c->path);
-	abort();
+	printf("\n[COMPILER] ERROR: %s at line %d '%s'\n", message, c->node->line, c->path);
 	if(c->jmp)
 		longjmp(*c->jmp, 1);
+	else
+		abort();
 }
 
 static Operand string(Compiler *c, const char *str)
@@ -107,7 +110,7 @@ static Operand string(Compiler *c, const char *str)
 	return (Operand) { .type = OPERAND_TYPE_INDEXED_STRING, .value.string_index = string_table_intern(c->strings, str) };
 }
 
-static Operand integer(int i)
+static Operand integer(int64_t i)
 {
 	return (Operand) { .type = OPERAND_TYPE_INT, .value.integer = i };
 }
@@ -592,6 +595,24 @@ static int define_local_variable(Compiler *c, const char *name, bool is_parm)
 	return c->variable_index - 1;
 }
 
+static void identifier(Compiler *c, ASTNode *n)
+{
+	int glob_idx = -1;
+	for(size_t i = 0; variable_globals[i]; ++i)
+	{
+		if(!strcmp(n->ast_identifier_data.name, variable_globals[i]))
+		{
+			glob_idx = i;
+			emit2(c, OP_GLOB, integer(i), integer(1));
+		}
+	}
+	if(glob_idx == -1)
+	{
+		int idx = define_local_variable(c, n->ast_identifier_data.name, false);
+		emit4(c, OP_REF, integer(idx), NONE, NONE, NONE);
+	}
+}
+
 static void lvalue(Compiler *c, ASTNode *n)
 {
 	switch(n->type)
@@ -604,20 +625,7 @@ static void lvalue(Compiler *c, ASTNode *n)
 
 		case AST_IDENTIFIER:
 		{
-			int glob_idx = -1;
-			for(size_t i = 0; variable_globals[i]; ++i)
-			{
-				if(!strcmp(n->ast_identifier_data.name, variable_globals[i]))
-				{
-					glob_idx = i;
-					emit2(c, OP_GLOB, integer(i), integer(1));
-				}
-			}
-			if(glob_idx == -1)
-			{
-				int idx = define_local_variable(c, n->ast_identifier_data.name, false);
-				emit4(c, OP_REF, integer(idx), NONE, NONE, NONE);
-			}
+			identifier(c, n);
 		}
 		break;
 		case AST_MEMBER_EXPR:
@@ -896,7 +904,8 @@ IMPL_VISIT(ASTCallExpr)
 	{
 		if(pass_args_as_ref && n->numarguments - 1 != i)
 		{
-			lvalue(c, n->arguments[n->numarguments - i - 1]);
+			identifier(c, n->arguments[n->numarguments - i - 1]);
+			// lvalue(c, n->arguments[n->numarguments - i - 1]);
 		} else
 		{
 			visit(n->arguments[n->numarguments - i - 1]);
@@ -932,7 +941,13 @@ IMPL_VISIT(ASTExprStmt)
 	c->node = (ASTNode*)n;
 	// debug_info_node(c, (ASTNode*)n);
 	visit(n->expression);
-	emit(c, OP_POP);
+	if(c->flags & GSC_COMPILE_FLAG_PRINT_EXPRESSION)
+	{
+		emit(c, OP_PRINT_EXPR);
+	} else
+	{
+		emit(c, OP_POP);
+	}
 }
 IMPL_VISIT(ASTBlockStmt)
 {

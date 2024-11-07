@@ -42,14 +42,14 @@ set(SOURCES
 	debug.c
     precedence.c
 )
-add_executable(gsc ${SOURCES} platform.c)
+# add_executable(gsc ${SOURCES} platform.c)
 add_library(libgsc STATIC ${SOURCES} library.c)
 target_include_directories(libgsc PRIVATE include)
 target_compile_definitions(libgsc PRIVATE BUILD_LIB)
 set_property(TARGET libgsc PROPERTY OUTPUT_NAME gsc)
 
 include(basename.cmake)
-define_file_basename_for_sources(gsc)
+# define_file_basename_for_sources(gsc)
 define_file_basename_for_sources(libgsc)
 
 set_target_properties(libgsc PROPERTIES
@@ -71,8 +71,8 @@ else()
     target_compile_options(libgsc PRIVATE -Wall -Wextra -Werror -fPIC -fvisibility=hidden)
     target_link_libraries(libgsc PRIVATE m)
     
-    target_compile_options(gsc PRIVATE -Wall -Wextra -Werror -fPIC -fvisibility=hidden)
-    target_link_libraries(gsc m)
+    # target_compile_options(gsc PRIVATE -Wall -Wextra -Werror -fPIC -fvisibility=hidden)
+    # target_link_libraries(gsc m)
 endif()
 
 if (CMAKE_BUILD_TYPE STREQUAL "Release")

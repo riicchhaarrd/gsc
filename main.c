@@ -41,7 +41,7 @@ static bool node_fn(ASTNode *n, void *ctx)
 	return false;
 }
 
-int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *perm, Arena scratch, StringTable *strtab)
+int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *perm, Arena scratch, StringTable *strtab, int flags)
 {
 	if(!data)
 		return 1;
@@ -49,7 +49,7 @@ int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *pe
 	jmp_buf jmp;
 	if(setjmp(jmp))
 	{
-		printf("[ERROR] Out of memory!\n");
+		// printf("[ERROR] Out of memory!\n");
 		return 1;
 	}
 	
@@ -57,6 +57,7 @@ int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *pe
 	compiler.arena = &scratch;
 	compiler.strings = strtab;
 	compiler.jmp = &jmp;
+	compiler.flags = flags;
 	// char path[512];
 	// snprintf(path, sizeof(path), "%s/%s.gsc", base_path, input_file);
 	// for(char *p = path; *p; p++)
@@ -123,6 +124,8 @@ int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *pe
 	// 	printf("INCLUDE:%s\n", it->key);
 	// 	getchar();
 	// }
+	// printf("scratch %f MiB\n", arena_available_mib(&scratch));
+	// getchar();
 	return 0;
 }
 

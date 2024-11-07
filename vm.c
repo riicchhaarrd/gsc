@@ -4,6 +4,8 @@
 #include "ast.h"
 #include <signal.h>
 #include <time.h>
+#include <inttypes.h>
+#include "util.h"
 
 #ifndef MAX
 	#define MAX(A, B) ((A) > (B) ? (A) : (B))
@@ -18,7 +20,8 @@
 typedef struct
 {
 	// char data[UNION_OBJECT_SIZE];
-	char data[64]; // 64 so we can allocate small strings too
+	char data[72]; // 64 so we can allocate small strings too
+	// increased to 72 for Object
 } UnionObject;
 
 DEFINE_OBJECT_POOL(thread, Thread)
@@ -115,7 +118,9 @@ VariableString allocate_variable_string(VM *vm, int len) // len is including \0
 	char *ptr = NULL;
 	if(len <= 64)
 	{
-		ptr = (char *)object_pool_allocate(&vm->pool.uo);
+		ptr = (char *)object_pool_allocate(&vm->pool.uo, char);
+		if(!ptr)
+			vm_error(vm, "No strings left");
 	}
 	else
 	{
@@ -301,12 +306,13 @@ void vm_error(VM *vm, const char *fmt, ...)
 		   current ? current->line : -1,
 		   sf && sf->file ? sf->file : "?",
 		   sf && sf->function ? sf->function : "?");
-	// vm_stacktrace(vm);
+	vm_stacktrace(vm);
 	// print_globals(vm);
 	// vm_print_thread_info(vm);
-	abort();
 	if(vm->jmp)
 		longjmp(*vm->jmp, 1);
+	else
+		abort();
 }
 
 static Variable *local(VM *vm, size_t index)
@@ -443,11 +449,18 @@ static Variable ref(VM *vm, Variable *referee)
 Variable vm_create_object(VM *vm)
 {
 	Variable v = { .type = VAR_OBJECT };
-	Object *o = object_pool_allocate(&vm->pool.uo);
+	Object *o = object_pool_allocate(&vm->pool.uo, Object);
+	if(!o)
+		vm_error(vm, "No objects left");
 	o->fields = NULL;
 	o->tail = &o->fields;
 	o->refcount = 0;
 	o->field_count = 0;
+	o->proxy = NULL;
+	o->debug_info = vm->debug_info;
+	// vm_set_object_field(vm, o, "__line", &((Variable) { .type = VAR_INTEGER, .u.ival = line }));
+	// vm_set_object_field(vm, o, "__file", &((Variable) { .type = VAR_INTERNED_STRING, .u.ival = vm_string_index(vm, sf ? sf->file : "?") }));
+
 	v.u.oval = o;
 	return v;
 }
@@ -475,11 +488,15 @@ static void push_thread(VM *vm, Thread *thr, Variable v)
     thr->stack[thr->sp++] = v;
 }
 
-
 static void push(VM *vm, Variable v)
 {
     Thread *thr = vm->thread;
 	push_thread(vm, thr, v);
+}
+
+int vm_sp(VM *vm)
+{
+	return vm->thread->sp;
 }
 
 static Variable pop_thread(VM *vm, Thread *thr)
@@ -500,6 +517,11 @@ static Variable pop(VM *vm)
 	return pop_thread(vm, thr);
 }
 
+Variable vm_pop(VM *vm)
+{
+	return pop(vm);
+}
+
 static Variable *pop_ref(VM *vm)
 {
 	Variable value = pop(vm);
@@ -510,20 +532,13 @@ static Variable *pop_ref(VM *vm)
 	return value.u.refval;
 }
 
-static int cast_int(VM* vm, Variable *v)
-{
-	if(v->type != VAR_INTEGER)
-		vm_error(vm, "'%s' is not a integer", variable_type_names[v->type]);
-	return v->u.ival;
-}
-
-static Variable *top(VM *vm, int offset)
-{
-    Thread *thr = vm->thread;
-    StackFrame *sf = stack_frame(vm, thr);
-    Variable *v = &thr->stack[thr->sp - 1 - offset];
-	return v;
-}
+// static Variable *top(VM *vm, int offset)
+// {
+//     Thread *thr = vm->thread;
+//     StackFrame *sf = stack_frame(vm, thr);
+//     Variable *v = &thr->stack[thr->sp - 1 - offset];
+// 	return v;
+// }
 
 static void pop_string(VM *vm, char *str, size_t n)
 {
@@ -790,6 +805,8 @@ static Variable unary(VM *vm, Variable *arg, int op)
 	return result;
 }
 
+// #define VM_ERROR_ON_DIVIDE_BY_ZERO
+
 static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 {
 	char temp[64];
@@ -853,7 +870,19 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 				case TK_PLUS_ASSIGN:
 				case '+': *c = a + b; break;
 				case TK_DIV_ASSIGN:
-				case '/': *c = a / b; break;
+				case '/':
+					if(b == 0)
+					{
+						#ifdef VM_ERROR_ON_DIVIDE_BY_ZERO
+							vm_error(vm, "Divide by zero");
+						#else
+							*c = 0;
+						#endif
+					} else
+					{
+						*c = a / b;
+					}
+					break;
 				case TK_MUL_ASSIGN:
 				case '*': *c = a * b; break;
 				case TK_MINUS_ASSIGN:
@@ -920,7 +949,20 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 				case TK_PLUS_ASSIGN:
 				case '+': *c = a + b; break;
 				case TK_DIV_ASSIGN:
-				case '/': *c = a / b; break;
+				case '/':
+					if(b == 0.0)
+					{
+						#ifdef VM_ERROR_ON_DIVIDE_BY_ZERO
+							vm_error(vm, "Divide by zero");
+						#else
+							*c = 0.f;
+						#endif
+					}
+					else
+					{
+						*c = a / b;
+					}
+					break;
 				case TK_MUL_ASSIGN:
 				case '*': *c = a * b; break;
 				case TK_MINUS_ASSIGN:
@@ -1058,7 +1100,7 @@ static Variable binop(VM *vm, Variable *lhs, Variable *rhs, int op)
 	return result;
 }
 
-static Variable integer(VM *vm, int i)
+static Variable integer(VM *vm, int64_t i)
 {
 	Variable v = var(vm);
 	v.type = VAR_INTEGER;
@@ -1085,7 +1127,38 @@ Thread *remove_thread(VM *vm)
 	return t;
 }
 
-static bool call_function(VM *vm, Thread*, const char *file, const char *function, size_t nargs, bool, int);
+gsc_Function object_get_function(VM *vm, Object *object, const char *function)
+{
+	ObjectField *entry = vm_object_upsert(NULL, object, function);
+	if(!entry)
+		return NULL;
+	Variable *val = entry->value;
+	if(val->type != VAR_FUNCTION)
+		vm_error(vm, "'%s' is not a function", function);
+	return val->u.funval.native_function;
+}
+
+gsc_Function object_find_callable(VM *vm, Object *object, const char *callable, const char *function)
+{
+	Object *proxy = object->proxy;
+	while(proxy)
+	{
+		ObjectField *entry = vm_object_upsert(NULL, proxy, callable);
+		if(entry)
+		{
+			Variable *call = entry->value;
+			if(call->type != VAR_OBJECT)
+				vm_error(vm, "%s is not an object", callable);
+			gsc_Function f = object_get_function(vm, call->u.oval, function);
+			if(f)
+				return f;
+		}
+		proxy = proxy->proxy;
+	}
+	return NULL;
+}
+
+static bool call_function(VM *vm, Thread*, const char *file, const char *function, int function_string_index, size_t nargs, bool, int);
 #define ASSERT_STACK(X)                                                              \
 	do                                                                               \
 	{                                                                                \
@@ -1098,7 +1171,9 @@ static bool call_function(VM *vm, Thread*, const char *file, const char *functio
 static bool execute_instruction(VM *vm, Instruction *ins)
 {
     Thread *thr = vm->thread;
-    StackFrame *sf = stack_frame(vm, thr);
+	StackFrame *sf = stack_frame(vm, thr);
+	vm->debug_info.line = ins->line;
+	vm->debug_info.file = sf->file;
 	if(vm->flags & VM_FLAG_VERBOSE)
 	{
     	print_instruction(vm, ins, stdout);
@@ -1109,6 +1184,18 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 		case OP_POP:
 		{
             Variable v = pop(vm);
+            decref(vm, &v);
+			ASSERT_STACK(-1);
+		}
+		break;
+
+		case OP_PRINT_EXPR:
+		{
+			char buf[1024];
+            Variable v = pop(vm);
+			const char *str = vm_stringify(vm, &v, buf, sizeof(buf));
+			process_escape_sequences(str, stdout);
+			putchar('\n');
             decref(vm, &v);
 			ASSERT_STACK(-1);
 		}
@@ -1175,11 +1262,13 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 			{
 				if(obj->type == VAR_UNDEFINED) // Coerce to object... Just make this a new object
 				{
-					*obj = vm_create_object(vm);
+					gsc_add_tagged_object(vm->ctx, "UNDEFINED coerced to OBJECT");
+					*obj = pop(vm);
+					// *obj = vm_create_object(vm);
 				}
 				else
 				{
-					vm_error(vm, "'%s' is not a object", variable_type_names[obj->type]);
+					vm_error(vm, "'%s' is not an object", variable_type_names[obj->type]);
 				}
 			}
 			Object *o = object_for_var(obj);
@@ -1187,10 +1276,28 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 			{
 				vm_error(vm, "object is null");
 			}
-			int idx = vm_string_index(vm, prop);
-			ObjectField *entry = vm_object_upsert(vm, o, string(vm, idx)); // We're using the StringTable unique char* pointer to pass to upsert, prop wouldn't work
-			push(vm, ref(vm, entry->value));
-			ASSERT_STACK(-1);
+
+			bool handled = false;
+			if(o->proxy)
+			{
+				gsc_Function func = object_find_callable(vm, o, "__set", prop);
+				if(func)
+				{
+					push(vm, *obj);
+					Variable v = var(vm);
+					v.type = VAR_FUNCTION;
+					v.u.funval.native_function = func;
+					push(vm, v);
+					handled = true;
+				}
+			}
+			if(!handled)
+			{
+				int idx = vm_string_index(vm, prop);
+				ObjectField *entry = vm_object_upsert(vm, o, string(vm, idx)); // We're using the StringTable unique char* pointer to pass to upsert, prop wouldn't work
+				push(vm, ref(vm, entry->value));
+			}
+			// ASSERT_STACK(-1);
 		}
 		break;
 
@@ -1216,7 +1323,7 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 						vm_pushinteger(vm, n);
 					} else
 					{
-						vm_error(vm, "'%s' is not a object", variable_type_names[obj.type]);
+						vm_error(vm, "'%s' is not an object", variable_type_names[obj.type]);
 					}
 				} else if(key.type == VAR_INTEGER)
 				{
@@ -1241,7 +1348,7 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 				}
 				else if(obj.type != VAR_OBJECT)
 				{
-					vm_error(vm, "'%s' is not a object", variable_type_names[obj.type]);
+					vm_error(vm, "'%s' is not an object", variable_type_names[obj.type]);
 				}
 				else
 				{
@@ -1260,14 +1367,35 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 					}
 					else
 					{
-						ObjectField *entry = vm_object_upsert(NULL, o, prop);
-						if(!entry)
+						bool handled = false;
+						if(o->proxy)
 						{
-							push(vm, undef);
+							gsc_Function func = object_find_callable(vm, o, "__get", prop);
+							if(func)
+							{
+								push(vm, obj);
+								push(vm, integer(vm, 0));
+								vm->fsp = vm->thread->sp;
+								if(func(vm->ctx) <= 0)
+									vm_error(vm, "Must return value");
+								Variable result = pop(vm);
+								pop(vm);
+								pop(vm);
+								push(vm, result);
+								handled = true;
+							}
 						}
-						else
+						if(!handled)
 						{
-							push(vm, *entry->value);
+							ObjectField *entry = vm_object_upsert(NULL, o, prop);
+							if(!entry)
+							{
+								push(vm, undef);
+							}
+							else
+							{
+								push(vm, *entry->value);
+							}
 						}
 					}
 				}
@@ -1278,23 +1406,41 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 
 		case OP_STORE:
 		{
-			Variable *dst = pop_ref(vm);
-			Variable src = pop(vm);
-			incref(vm, &src);
-			// TODO: move
-			// if(dst->type == VAR_OBJECT)
-			// {
-			// 	free(dst->u.oval);
-			// }
-			// else if(dst->type == VAR_STRING)
-			// {
-			// 	free(dst->u.sval);
-			// }
-			dst->type = src.type;
-			memcpy(&dst->u, &src.u, sizeof(dst->u));
-			// decref(vm, &dst);
-			push(vm, *dst);
-			ASSERT_STACK(-1);
+			if(gsc_type(vm->ctx, -1) == VAR_FUNCTION)
+			{
+				Variable dst = pop(vm);
+
+				// Variable obj = pop(vm);
+				// Variable src = pop(vm);
+				// push(vm, obj);
+				push(vm, integer(vm, 1));
+				vm->fsp = vm->thread->sp;
+				if(dst.u.funval.native_function(vm->ctx) != 0)
+					vm_error(vm, "Must not return value");
+				pop(vm); //nargs
+				pop(vm); //obj
+				// src
+
+			} else
+			{
+				Variable *dst = pop_ref(vm);
+				Variable src = pop(vm);
+				incref(vm, &src);
+				// TODO: move
+				// if(dst->type == VAR_OBJECT)
+				// {
+				// 	free(dst->u.oval);
+				// }
+				// else if(dst->type == VAR_STRING)
+				// {
+				// 	free(dst->u.sval);
+				// }
+				dst->type = src.type;
+				memcpy(&dst->u, &src.u, sizeof(dst->u));
+				// decref(vm, &dst);
+				push(vm, *dst);
+				ASSERT_STACK(-1);
+			}
 
 			if(vm->flags & VM_FLAG_VERBOSE)
 				print_locals(vm);
@@ -1447,7 +1593,8 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 
 		case OP_TABLE:
 		{
-			push(vm, vm_create_object(vm));
+			gsc_add_tagged_object(vm->ctx, "OP_TABLE");
+			// push(vm, vm_create_object(vm));
 		}
 		break;
 
@@ -1460,7 +1607,14 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 			if(--thr->bp < 0)
 			{
 				thr->state = VM_THREAD_INACTIVE;
-				pop(vm); // retval
+				if(thr->return_value) // TODO: FIXME
+				{
+					*thr->return_value = pop(vm);
+				}
+				else
+				{
+					pop(vm); // retval
+				}
 				return false;
 			}
 		}
@@ -1486,7 +1640,7 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 		case OP_CALL_PTR:
 		case OP_CALL:
 		{
-			const char *function = NULL;
+			int function = -1;
 			const char *file = NULL;
 			if(ins->opcode == OP_CALL_PTR)
 			{
@@ -1495,12 +1649,12 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 				{
 					vm_error(vm, "'%s' is not a function pointer", variable_type_names[func.type]);
 				}
-				function = string(vm, func.u.funval.function);
+				function = func.u.funval.function;
 				if(func.u.funval.file != -1)
 					file = string(vm, func.u.funval.file);
 			} else
 			{
-				function = read_string(vm, ins, 0);
+				function = read_string_index(vm, ins, 0);
 				if(check_operand(ins, 1, OPERAND_TYPE_INDEXED_STRING))
 					file = read_string(vm, ins, 1);
 			}
@@ -1510,18 +1664,22 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 			{
 				// Variable ov = pop(vm);
 				// if(ov.type != VAR_OBJECT)
-				// 	vm_error(vm, "'%s' is not a object", variable_type_names[ov.type]);
+				// 	vm_error(vm, "'%s' is not an object", variable_type_names[ov.type]);
 				// object = object_for_var(&ov);
 				// object = pop_ref(vm);
 			}
-            int nargs = cast_int(vm, top(vm, 0));
+            int nargs = vm_cast_int(vm, vm_stack_top(vm, -1));
 			if(!file)
 				file = sf->file;
-			info(vm, "CALLING -> %s::%s %d\n", file, function, nargs);
+			// info(vm, "CALLING -> %s::%s %d\n", file, function, nargs);
+			const char *function_name = string(vm, function);
+			vm->debug_info.function = function_name;
 
 			if(call_flags & VM_CALL_FLAG_THREADED)
 			{
-				Thread *nt = object_pool_allocate(&vm->pool.threads);
+				Thread *nt = object_pool_allocate(&vm->pool.threads, Thread);
+				if(!nt)
+					vm_error(vm, "No threads left");
 				memset(nt, 0, sizeof(Thread));
 				nt->bp = 0;
 				nt->state = VM_THREAD_ACTIVE;
@@ -1533,8 +1691,9 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 					push_thread(vm, nt, arg);
 				}
 				push_thread(vm, thr, undef); // return value for caller thread
+				nt->return_value = &thr->stack[thr->sp - 1]; // TODO: FIXME
 				push_thread(vm, nt, integer(vm, nargs));
-				call_function(vm, nt, file, function, nargs, true, call_flags);
+				call_function(vm, nt, file, function_name, function, nargs, true, call_flags);
 				nt->caller.file = sf->file;
 				nt->caller.function = sf->function;
 				add_thread(vm, nt);
@@ -1545,7 +1704,7 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 			{
 				if(++thr->bp >= VM_FRAME_SIZE)
 					vm_error(vm, "thr->bp >= VM_FRAME_SIZE");
-				if(!call_function(vm, thr, file, function, nargs, false, call_flags))
+				if(!call_function(vm, thr, file, function_name, function, nargs, false, call_flags))
 					thr->bp--;
 			}
 			// ASSERT_STACK(-nargs);
@@ -1631,11 +1790,15 @@ ObjectField *vm_object_upsert(VM *vm, Object *o, const char *key)
 				o->tail = &o->fields;
 			}
 
-			ObjectField *new_node = object_pool_allocate(&vm->pool.uo);
+			ObjectField *new_node = object_pool_allocate(&vm->pool.uo, ObjectField);
+			if(!new_node)
+				vm_error(vm, "No object fields left");
 			o->field_count++;
 			memset(new_node, 0, sizeof(ObjectField));
 			new_node->key = key;
-			Variable *v = object_pool_allocate(&vm->pool.uo);
+			Variable *v = object_pool_allocate(&vm->pool.uo, Variable);
+			if(!v)
+				vm_error(vm, "No variables left");
 			v->type = VAR_UNDEFINED;
 			new_node->value = v;
 			new_node->next = NULL;
@@ -1654,51 +1817,107 @@ ObjectField *vm_object_upsert(VM *vm, Object *o, const char *key)
 	return NULL;
 }
 
-ObjectField *vm_set_object_field(VM *vm, Object *o, const char *key, Variable *value)
+void vm_get_object_field(VM *vm, int obj_index, const char *key)
 {
 	int idx = vm_string_index(vm, key);
+	Variable *ov = vm_stack(vm, obj_index);
+	if(ov->type != VAR_OBJECT)
+		vm_error(vm, "'%s' is not an object", variable_type_names[ov->type]);
+	Object *o = object_for_var(ov);
+	ObjectField *entry = vm_object_upsert(NULL, o, string(vm, idx));
+	if(!entry)
+	{
+		push(vm, undef);
+	} else
+	{
+		push(vm, *entry->value);
+	}
+}
+
+void get_object_field(VM *vm, Variable *ov, const char *key)
+{
+	int idx = vm_string_index(vm, key);
+	Object *o = object_for_var(ov);
+	ObjectField *entry = vm_object_upsert(NULL, o, string(vm, idx));
+	if(!entry)
+	{
+		push(vm, undef);
+	} else
+	{
+		push(vm, *entry->value);
+	}
+}
+
+void set_object_field(VM *vm, Variable *ov, const char *key)
+{
+	int idx = vm_string_index(vm, key);
+	Object *o = object_for_var(ov);
 	ObjectField *entry = vm_object_upsert(vm, o, string(vm, idx));
-	*entry->value = *value;
-	return entry;
+	*entry->value = pop(vm);
+}
+
+void vm_set_object_field(VM *vm, int obj_index, const char *key)
+{
+	int idx = vm_string_index(vm, key);
+	Variable *ov = vm_stack(vm, obj_index);
+	if(ov->type != VAR_OBJECT)
+		vm_error(vm, "'%s' is not an object", variable_type_names[ov->type]);
+	Object *o = object_for_var(ov);
+	ObjectField *entry = vm_object_upsert(vm, o, string(vm, idx));
+	*entry->value = pop(vm);
 }
 
 void vm_init(VM *vm, Allocator *allocator, StringTable *strtab)
 {
 	memset(vm, 0, sizeof(vm));
+	vm->thread = &vm->temp_thread;
 	vm->allocator = allocator;
 	vm->strings = strtab;
 	vm->random_state = time(0);
-
-	uo_init(&vm->pool.uo, (1 << 16), -1, allocator);
+	if(!uo_init(&vm->pool.uo, (1 << 16), -1, allocator))
+		vm_error(vm, "Failed to initialize union objects");
 	// variable_init(&vm->pool.variables, (1 << 19), -1, allocator);
 	// object_init(&vm->pool.objects, (1 << 19), -1, allocator);
 	// object_field_init(&vm->pool.object_fields, (1 << 19), -1, allocator);
-	thread_init(&vm->pool.threads, VM_THREAD_POOL_SIZE, -1, allocator);
-	stack_frame_init(&vm->pool.stack_frames, VM_THREAD_POOL_SIZE * VM_FRAME_SIZE, -1, allocator);
+	if(!thread_init(&vm->pool.threads, VM_THREAD_POOL_SIZE, -1, allocator))
+		vm_error(vm, "Failed to initialize threads");
+	if(!stack_frame_init(&vm->pool.stack_frames, VM_THREAD_POOL_SIZE * VM_FRAME_SIZE, -1, allocator))
+		vm_error(vm, "Failed to initialize stack frames");
 
 	size_t N = 16384;
-	arena_init(&vm->c_function_arena, allocator->malloc(allocator->ctx, N), N);
+	char *arena_mem = allocator->malloc(allocator->ctx, N);
+	if(!arena_mem)
+		vm_error(vm, "Failed to allocate function memory");
+	arena_init(&vm->c_function_arena, arena_mem, N);
 
 	// hash_trie_init(&vm->c_functions);
 	// hash_trie_init(&vm->c_methods);
 	// hash_table_init(&vm->c_functions, 10, &allocator);
     // hash_table_init(&vm->c_methods, 10, &allocator);
+
+	vm->global_object = vm_create_object(vm);
+	vm->global_object.u.oval->refcount = VM_REFCOUNT_NO_FREE;
+
 	for(size_t i = 0; i < VAR_GLOB_MAX; ++i)
 	{
 		vm->globals[i] = vm_create_object(vm);
+		object_for_var(&vm->globals[i])->tag = variable_globals[i];
 		object_for_var(&vm->globals[i])->refcount = VM_REFCOUNT_NO_FREE;
 	}
 
 	{
-		Object *level = object_for_var(&vm->globals[VAR_GLOB_LEVEL]); // TODO: FIXME is actually an array
+		int level = vm_sp(vm);
+		push(vm, vm->globals[VAR_GLOB_LEVEL]); // TODO: FIXME is actually an array
 		Variable empty = vm_create_object(vm);
-		vm_set_object_field(vm, level, "struct", &empty);
+		vm_pushobject(vm, empty.u.oval);
+		vm_set_object_field(vm, level, "struct");
 	}
 
 	{
-		Object *anim = object_for_var(&vm->globals[VAR_GLOB_ANIM]);
-		Variable empty = { .type = VAR_BOOLEAN, .u.ival = 0 };
-		vm_set_object_field(vm, anim, "chatInitialized", &empty);
+		int anim = vm_sp(vm);
+		push(vm, vm->globals[VAR_GLOB_ANIM]);
+		vm_pushbool(vm, false);
+		vm_set_object_field(vm, anim, "chatInitialized");
 	}
 
 	// size_t n = 64 * 10000 * 10000;
@@ -1706,33 +1925,53 @@ void vm_init(VM *vm, Allocator *allocator, StringTable *strtab)
 	// arena_init(&vm->arena, buf, n);
 }
 
+typedef struct
+{
+	void *callback;
+	void *ctx;
+} CallbackFunction;
+
+void vm_register_callback_function(VM *vm, const char *name, void *callback, void *ctx)
+{
+	CallbackFunction *f = vm->allocator->malloc(vm->allocator->ctx, sizeof(CallbackFunction));
+	f->callback = callback;
+	f->ctx = ctx ? ctx : vm;
+	hash_trie_upsert(&vm->callback_functions, name, vm->allocator, false)->value = f;
+}
+
 void vm_register_c_function(VM *vm, const char *name, vm_CFunction callback)
 {
-	// hash_table_insert(&vm->c_functions, lower)->value = callback;
-	hash_trie_upsert(&vm->c_functions, name, vm->allocator, false)->value = callback;
+	vm_register_callback_function(vm, name, (void *)callback, vm);
 }
 
-static vm_CFunction get_c_function(VM *vm, const char *name)
+static CallbackFunction *get_callback_function(VM *vm, const char *name)
 {
-	HashTrieNode *entry = hash_trie_upsert(&vm->c_functions, name, NULL, false);
-	// HashTableEntry *entry = hash_table_find(&vm->c_functions, lower);
+	HashTrieNode *entry = hash_trie_upsert(&vm->callback_functions, name, NULL, false);
 	if(!entry)
 		return NULL;
 	return entry->value;
 }
 
-void vm_register_c_method(VM *vm, const char *name, vm_CMethod callback)
-{
-	hash_trie_upsert(&vm->c_methods, name, vm->allocator, false)->value = callback;
-}
+// void vm_register_callback_method(VM *vm, const char *name, void *callback, void *ctx)
+// {
+// 	CallbackFunction *f = vm->allocator->malloc(vm->allocator->ctx, sizeof(CallbackFunction));
+// 	f->callback = callback;
+// 	f->ctx = ctx ? ctx : vm;
+// 	hash_trie_upsert(&vm->callback_methods, name, vm->allocator, false)->value = f;
+// }
 
-static vm_CMethod get_c_method(VM *vm, const char *name)
-{
-	HashTrieNode *entry = hash_trie_upsert(&vm->c_methods, name, NULL, false);
-	if(!entry)
-		return NULL;
-	return entry->value;
-}
+// void vm_register_c_method(VM *vm, const char *name, vm_CMethod callback)
+// {
+// 	vm_register_callback_method(vm, name, (void *)callback, vm);
+// }
+
+// static CallbackFunction *get_callback_method(VM *vm, const char *name)
+// {
+// 	HashTrieNode *entry = hash_trie_upsert(&vm->callback_methods, name, NULL, false);
+// 	if(!entry)
+// 		return NULL;
+// 	return entry->value;
+// }
 
 // bool vm_run(VM *vm, float dt)
 // {
@@ -1761,24 +2000,31 @@ static vm_CMethod get_c_method(VM *vm, const char *name)
 // 	return true;
 // }
 
-Variable *vm_argv(VM *vm, int idx)
-{
-	Thread *thr = vm->thread;
-	int nargs = cast_int(vm, top(vm, 0));
-	return &thr->stack[thr->sp - 3 - idx];
-	// return thr->stack[thr->sp - nargs - 1 + idx];
-}
 
 size_t vm_argc(VM *vm)
 {
-	return cast_int(vm, top(vm, 0));
+	return vm->nargs;
 }
 
-const char *vm_checkstring(VM *vm, int idx)
+Variable *vm_argv(VM *vm, int idx)
+{
+	return &vm->thread->stack[vm->fsp - 3 - idx];
+}
+
+Variable *vm_stack(VM *vm, int idx)
 {
 	Thread *thr = vm->thread;
-	StackFrame *sf = stack_frame(vm, thr);
-	Variable *arg = vm_argv(vm, idx);
+	return &thr->stack[idx];
+}
+
+Variable *vm_stack_top(VM *vm, int idx)
+{
+	Thread *thr = vm->thread;
+	return &thr->stack[thr->sp + idx];
+}
+
+const char *vm_cast_string(VM *vm, Variable *arg)
+{
 	switch(arg->type)
 	{
 		case VAR_INTERNED_STRING:
@@ -1786,7 +2032,7 @@ const char *vm_checkstring(VM *vm, int idx)
 		case VAR_FLOAT:
 		{
 			char *str = new(&vm->c_function_arena, char, 32);
-			snprintf(str, 32, "%.2f", arg->u.fval);
+			snprintf(str, 32, "%f", arg->u.fval);
 			return str;
 		}
 		break;
@@ -1796,13 +2042,18 @@ const char *vm_checkstring(VM *vm, int idx)
 		case VAR_INTEGER:
 		{
 			char *str = new(&vm->c_function_arena, char, 32);
-			snprintf(str, 32, "%d", arg->u.ival);
+			snprintf(str, 32, "%" PRId64, arg->u.ival);
 			return str;
 		}
 		break;
 		default: vm_error(vm, "Not a string");
 	}
 	return "";
+}
+
+const char *vm_checkstring(VM *vm, int idx)
+{
+	return vm_cast_string(vm, vm_argv(vm, idx));
 }
 
 // https://youtu.be/LWFzPP8ZbdU?t=970
@@ -1815,21 +2066,20 @@ uint32_t vm_random(VM *vm) // xorshift1
 	return *state;
 }
 
-void vm_checkvector(VM *vm, int idx, float *outvec)
+void vm_cast_vector(VM *vm, Variable *arg, float *outvec)
 {
-	Thread *thr = vm->thread;
-	StackFrame *sf = stack_frame(vm, thr);
-	Variable *arg = vm_argv(vm, idx);
 	if(arg->type != VAR_VECTOR)
 		vm_error(vm, "Not a vector");
 	memcpy(outvec, arg->u.vval, sizeof(arg->u.vval));
 }
 
-float vm_checkfloat(VM *vm, int idx)
+void vm_checkvector(VM *vm, int idx, float *outvec)
 {
-	Thread *thr = vm->thread;
-	StackFrame *sf = stack_frame(vm, thr);
-	Variable *arg = vm_argv(vm, idx);
+	vm_cast_vector(vm, vm_argv(vm, idx), outvec);
+}
+
+float vm_cast_float(VM *vm, Variable *arg)
+{
 	switch(arg->type)
 	{
 		case VAR_INTEGER: return (float)arg->u.ival;
@@ -1839,24 +2089,46 @@ float vm_checkfloat(VM *vm, int idx)
 	return 0;
 }
 
-bool vm_checkbool(VM *vm, int idx)
+Object *vm_cast_object(VM *vm, Variable *arg)
 {
-	Thread *thr = vm->thread;
-	StackFrame *sf = stack_frame(vm, thr);
-	Variable *arg = vm_argv(vm, idx);
+	if(arg->type != VAR_OBJECT)
+		vm_error(vm, "'%s' is not an object", variable_type_names[arg->type]);
+	return arg->u.oval;
+}
+
+int vm_checkobject(VM *vm, int idx)
+{
+	Object *o = vm_cast_object(vm, vm_argv(vm, idx));
+	return vm->fsp - 3 - idx;
+}
+
+float vm_checkfloat(VM *vm, int idx)
+{
+	return vm_cast_float(vm, vm_argv(vm, idx));
+}
+
+bool vm_cast_bool(VM *vm, Variable *arg)
+{
 	if(arg->type != VAR_BOOLEAN)
 		vm_error(vm, "Not a boolean");
 	return arg->u.ival;
 }
 
-int vm_checkinteger(VM *vm, int idx)
+bool vm_checkbool(VM *vm, int idx)
 {
-	Thread *thr = vm->thread;
-	StackFrame *sf = stack_frame(vm, thr);
-	Variable *arg = vm_argv(vm, idx);
+	return vm_cast_bool(vm, vm_argv(vm, idx));
+}
+
+int64_t vm_cast_int(VM *vm, Variable *arg)
+{
 	if(arg->type != VAR_INTEGER)
 		vm_error(vm, "Not a integer");
 	return arg->u.ival;
+}
+
+int64_t vm_checkinteger(VM *vm, int idx)
+{
+	return vm_cast_int(vm, vm_argv(vm, idx));
 }
 
 void vm_pushstring_n(VM *vm, const char *str, size_t n) // n is without \0
@@ -1896,12 +2168,14 @@ void vm_pushvar(VM *vm, Variable *v)
 	push(vm, *v);
 }
 
-void vm_pushobject(VM *vm, Object *o)
+int vm_pushobject(VM *vm, Object *o)
 {
 	Variable v = var(vm);
 	v.type = VAR_OBJECT;
 	v.u.oval = o;
+	int sp = vm_sp(vm);
 	push(vm, v);
+	return sp;
 }
 
 Thread *vm_thread(VM *vm)
@@ -1941,36 +2215,50 @@ void vm_pushundefined(VM *vm)
 }
 
 // TODO: make use of namespace
-static void call_c_function(VM *vm, const char *namespace, const char *function, size_t nargs, int call_flags)
+static void call_c_function(VM *vm, const char *namespace, const char *function, int function_string_index, size_t nargs, int call_flags)
 {
-	if(call_flags & VM_CALL_FLAG_THREADED)
-	{
-		vm_error(vm, "Can't call builtin functions threaded");
-	}
+	vm->nargs = nargs;
+	vm->fsp = vm->thread->sp;
+	// if(call_flags & VM_CALL_FLAG_THREADED)
+	// {
+	// 	vm_error(vm, "Can't call builtin functions threaded");
+	// }
 	Arena rollback = vm->c_function_arena;
 	int nret;
 	if(!(call_flags & VM_CALL_FLAG_METHOD))
 	{
-		vm_CFunction cfunc = get_c_function(vm, function);
+		CallbackFunction *cfunc = get_callback_function(vm, function);
 		if(!cfunc)
 		{
 			vm_error(vm, "No builtin function '%s'", function);
 		}
-		nret = cfunc(vm);
+		vm_CFunction fun = (vm_CFunction)cfunc->callback;
+		nret = fun(cfunc->ctx);
 	}
 	else
 	{
-		vm_CMethod cmethod = get_c_method(vm, function);
-		if(!cmethod)
-		{
-			vm_error(vm, "No builtin method '%s'", function);
-		}
 		Variable *self = vm_argv(vm, -1);
 		if(self->type != VAR_OBJECT)
 		{
-			vm_error(vm, "not a object");
+			vm_error(vm, "'%s' is not an object", variable_type_names[self->type]);
 		}
-		nret = cmethod(vm, object_for_var(self));
+		Object *o = object_for_var(self);
+		if(!o->proxy)
+		{
+			vm_error(vm,
+					 "no methods for %s created at %s line %d in function %s, method: %s",
+					 o->tag,
+					 o->debug_info.file,
+					 o->debug_info.line,
+					 o->debug_info.function,
+					 function);
+		}
+		gsc_Function func = object_find_callable(vm, o, "__call", function);
+		if(!func)
+		{
+			vm_error(vm, "No builtin method '%s' for %s", function, o->proxy->tag);
+		}
+		nret = func(vm->ctx);
 	}
 	if(nret == 0)
 	{
@@ -2039,12 +2327,12 @@ const char *vm_stack_frame_variable_name(VM *vm, StackFrame *sf, int index)
 	return vmf->variable_names[index];
 }
 
-static bool call_function(VM *vm, Thread *thr, const char *file, const char *function, size_t nargs, bool reversed, int call_flags)
+static bool call_function(VM *vm, Thread *thr, const char *file, const char *function, int function_string_index, size_t nargs, bool reversed, int call_flags)
 {
 	CompiledFunction *vmf = vm->func_lookup(vm->ctx, file, function);
     if(!vmf)
     {
-		call_c_function(vm, file, function, nargs, call_flags);
+		call_c_function(vm, file, function, function_string_index, nargs, call_flags);
         return false;
 	}
 	// Object *prev_self = object_for_var(&vm->globals[VAR_GLOB_LEVEL]);
@@ -2097,17 +2385,20 @@ static bool call_function(VM *vm, Thread *thr, const char *file, const char *fun
 
 bool vm_call_function_thread(VM *vm, const char *file, const char *function, size_t nargs, Variable *self)
 {
-	vm->thread = object_pool_allocate(&vm->pool.threads);
+	vm->thread = object_pool_allocate(&vm->pool.threads, Thread);
+	if(!vm->thread)
+		vm_error(vm, "No threads left");
 	memset(vm->thread, 0, sizeof(Thread));
 	vm->thread->bp = 0;
+	vm->thread->return_value = NULL;
 	vm->thread->state = VM_THREAD_ACTIVE;
 	push_thread(vm, vm->thread, self ? *self : vm->globals[VAR_GLOB_LEVEL]);
 	push_thread(vm, vm->thread, integer(vm, nargs));
 	if(self && self->type != VAR_OBJECT)
-		vm_error(vm, "'%s' is not a object", variable_type_names[self->type]);
-	bool result = call_function(vm, vm->thread, file, function, nargs, false, 0);
+		vm_error(vm, "'%s' is not an object", variable_type_names[self->type]);
+	bool result = call_function(vm, vm->thread, file, function, vm_string_index(vm, function), nargs, false, 0);
 	add_thread(vm, vm->thread);
-	vm->thread = NULL;
+	vm->thread = &vm->temp_thread;
 	return result;
 }
 
@@ -2222,7 +2513,7 @@ bool vm_run_threads(VM *vm, float dt)
 			{
 				vm->thread = t;
 				run_thread(vm);
-				vm->thread = NULL;
+				vm->thread = &vm->temp_thread;
 			}
 			break;
 

@@ -39,6 +39,7 @@ typedef struct
 	char string[2048];
 	const char *source;
 	const char *path;
+	int flags;
 } Compiler;
 
 void dump_instructions(Compiler *c, Instruction *instructions);
@@ -49,4 +50,4 @@ Instruction *compile_function(Compiler *c,
 							  int *local_count,
 							  CompiledFunction *);
 // int compile_file(const char *path, CompiledFile *cf, Arena *perm, Arena scratch, StringTable *strtab);
-int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *perm, Arena scratch, StringTable *strtab);
+int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *perm, Arena scratch, StringTable *strtab, int flags);

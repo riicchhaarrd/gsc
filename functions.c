@@ -1,5 +1,6 @@
 #include "vm.h"
 #include <math.h>
+#include "include/gsc.h"
 
 static HashTrie fake_vars;
 
@@ -20,17 +21,18 @@ static Variable vec3(VM *vm, float x, float y, float z)
 	return v;
 }
 
-Object *create_fake_entity(VM *vm)
+int push_fake_entity(VM *vm)
 {
-	Object *o = vm_create_object(vm).u.oval;
-	Variable health = integer(vm, 0);
-	Variable maxhealth = integer(vm, 100);
-	vm_set_object_field(vm, o, "health", &health);
-	vm_set_object_field(vm, o, "maxhealth", &maxhealth);
-	Variable zero_vector = vec3(vm, 0.f, 0.f, 0.f);
-	vm_set_object_field(vm, o, "origin", &zero_vector);
-	vm_set_object_field(vm, o, "angles", &zero_vector);
-	return o;
+	int ent = gsc_add_object(vm->ctx);
+	gsc_add_int(vm->ctx, 0);
+	gsc_object_set_field(vm->ctx, ent, "health");
+	gsc_add_int(vm->ctx, 100);
+	gsc_object_set_field(vm->ctx, ent, "maxhealth");
+	gsc_add_vec3(vm->ctx, (float[]) { 0.f, 0.f, 0.f });
+	gsc_object_set_field(vm->ctx, ent, "origin");
+	gsc_add_vec3(vm->ctx, (float[]) { 0.f, 0.f, 0.f });
+	gsc_object_set_field(vm->ctx, ent, "angles");
+	return ent;
 }
 
 static int setexpfog(VM *vm)
@@ -190,23 +192,21 @@ static int getent(VM *vm)
 	{
 		if(!strcmp(value, "player"))
 		{
-			Object *player = create_fake_entity(vm); // TODO: add player specific fields here
-			vm_pushobject(vm, player);
+			int player = push_fake_entity(vm); // TODO: add player specific fields here
 			return 1;
 		}
 	}
 	// TODO: load map and return entities if they exist otherwise return undefined
-	Object *ent = create_fake_entity(vm);
-	vm_pushobject(vm, ent);
+	int ent = push_fake_entity(vm);
 	return 1;
 }
 
-static int spawn(VM *vm)
-{
-	Variable obj = vm_create_object(vm);
-	vm_pushvar(vm, &obj);
-	return 1;
-}
+// static int spawn(VM *vm)
+// {
+// 	Variable obj = vm_create_object(vm);
+// 	vm_pushvar(vm, &obj);
+// 	return 1;
+// }
 
 #include <sys/time.h>
 static int gettime(VM *vm)
@@ -272,60 +272,6 @@ static int isdefined(VM *vm)
 	return 1;
 }
 
-static int endon(VM *vm, Object *self)
-{
-	const char *key = vm_checkstring(vm, 0);
-	Thread *thr = vm_thread(vm);
-	int idx = vm_string_index(vm, key);
-	buf_push(thr->endon, idx);
-	return 0;
-}
-
-// TODO: wait for animation event / notetracks
-// Hack: prefix with anim_ and notify when animation is done / encounters a notetrack
-
-static int waittillmatch(VM *vm, Object *self)
-{
-	const char *key = vm_checkstring(vm, 0);
-	char fake_key[256];
-	snprintf(fake_key, sizeof(fake_key), "$nt_%s", key);
-	Thread *thr = vm_thread(vm);
-	thr->state = VM_THREAD_WAITING_EVENT;
-	thr->waittill.arguments = NULL;
-	thr->waittill.name = vm_string_index(vm, fake_key);
-	thr->waittill.object = self;
-	if(thr->waittill.name == -1)
-	{
-		vm_error(vm, "Key '%s' not found", fake_key);
-	}
-	return 0;
-}
-
-static int waittill(VM *vm, Object *self)
-{
-	const char *key = vm_checkstring(vm, 0);
-	Thread *thr = vm_thread(vm);
-	thr->state = VM_THREAD_WAITING_EVENT;
-	thr->waittill.arguments = NULL;
-	thr->waittill.name = vm_string_index(vm, key);
-	thr->waittill.object = self;
-	if(thr->waittill.name == -1)
-	{
-		vm_error(vm, "Key '%s' not found", key);
-	}
-	// printf("[VM] TODO implement waittill: %s\n", key);
-	return 0;
-}
-
-static int notify(VM *vm, Object *self)
-{
-	const char *key = vm_checkstring(vm, 0);
-	Thread *thr = vm_thread(vm);
-	// vm_notify(vm, vm_dup(vm, &thr->frame->self), key, vm_argc(vm));
-	vm_notify(vm, self, key, 0);
-	return 0;
-}
-
 static int assert_(VM *vm)
 {
 	bool cond = vm_checkbool(vm, 0);
@@ -370,19 +316,19 @@ static int isalive(VM *vm)
 
 Variable vm_intern_string_variable(VM *vm, const char *str);
 
-static int setmodel(VM *vm, Object *self)
-{
-	Variable str = vm_intern_string_variable(vm, vm_checkstring(vm, 0));
-	vm_set_object_field(vm, self, "model", &str);
-	return 0;
-}
+// static int setmodel(VM *vm, Object *self)
+// {
+// 	Variable str = vm_intern_string_variable(vm, vm_checkstring(vm, 0));
+// 	vm_set_object_field(vm, self, "model", &str);
+// 	return 0;
+// }
 
-static int giveweapon(VM *vm, Object *self)
-{
-	Variable str = vm_intern_string_variable(vm, vm_checkstring(vm, 0));
-	vm_set_object_field(vm, self, "weapon", &str);
-	return 0;
-}
+// static int giveweapon(VM *vm, Object *self)
+// {
+// 	Variable str = vm_intern_string_variable(vm, vm_checkstring(vm, 0));
+// 	vm_set_object_field(vm, self, "weapon", &str);
+// 	return 0;
+// }
 
 static int dummy_method(VM *vm, Object *self)
 {
@@ -418,10 +364,9 @@ static int issentient(VM *vm)
 
 static int getkeybinding(VM *vm)
 {
-	Variable obj = vm_create_object(vm);
-	Variable tmp = { .type = VAR_INTEGER, .u.ival = 0 };
-	vm_set_object_field(vm, obj.u.oval, "count", &tmp);
-	vm_pushvar(vm, &obj);
+	int obj = gsc_add_object(vm->ctx);
+	gsc_add_int(vm->ctx, 0);
+	gsc_object_set_field(vm->ctx, obj, "count");
 	return 1;
 }
 
@@ -591,127 +536,127 @@ void register_dummy_c_functions(VM *vm)
 {
 	hash_trie_init(&fake_vars);
 
-	vm_register_c_function(vm, "breakpoint", breakpoint);
-	vm_register_c_function(vm, "getchar", getchar_);
-	vm_register_c_function(vm, "print", print);
-	vm_register_c_function(vm, "println", println);
-	vm_register_c_function(vm, "setexpfog", setexpfog);
-	vm_register_c_function(vm, "getcvar", getcvar);
-	vm_register_c_function(vm, "getcvarint", getcvarint);
-	vm_register_c_function(vm, "getcvarfloat", getcvarfloat);
-	vm_register_c_function(vm, "isdefined", isdefined);
-	vm_register_c_function(vm, "setcvar", setcvar);
-	vm_register_c_function(vm, "setsavedcvar", setcvar);
-	vm_register_c_function(vm, "typeof", typeof_);
-	vm_register_c_function(vm, "dump", dump);
-	vm_register_c_function(vm, "spawnstruct", spawnstruct);
-	vm_register_c_function(vm, "getentarray", spawnstruct);
-	vm_register_c_function(vm, "getaiarray", spawnstruct);
-	vm_register_c_function(vm, "getspawnerarray", spawnstruct);
-	vm_register_c_function(vm, "getallvehiclenodes", spawnstruct);
-	vm_register_c_function(vm, "getvehiclenodearray", spawnstruct);
-	vm_register_c_function(vm, "getnodearray", spawnstruct);
-	vm_register_c_function(vm, "getspawnerteamarray", spawnstruct);
-	vm_register_c_function(vm, "getallnodes", spawnstruct);
-	vm_register_c_function(vm, "newhudelem", spawnstruct);
-	vm_register_c_function(vm, "getnode", getnode);
-	vm_register_c_function(vm, "getent", getent);
-	vm_register_c_function(vm, "substr", substr);
-	vm_register_c_function(vm, "byteat", byteat);
-	vm_register_c_function(vm, "int", int_);
-	vm_register_c_function(vm, "float", float_);
-	vm_register_c_function(vm, "spawn", spawn);
-	vm_register_c_function(vm, "gettime", gettime);
+	// vm_register_c_function(vm, "breakpoint", breakpoint);
+	// vm_register_c_function(vm, "getchar", getchar_);
+	// vm_register_c_function(vm, "print", print);
+	// vm_register_c_function(vm, "println", println);
+	// vm_register_c_function(vm, "setexpfog", setexpfog);
+	// vm_register_c_function(vm, "getcvar", getcvar);
+	// vm_register_c_function(vm, "getcvarint", getcvarint);
+	// vm_register_c_function(vm, "getcvarfloat", getcvarfloat);
+	// vm_register_c_function(vm, "isdefined", isdefined);
+	// vm_register_c_function(vm, "setcvar", setcvar);
+	// vm_register_c_function(vm, "setsavedcvar", setcvar);
+	// vm_register_c_function(vm, "typeof", typeof_);
+	// vm_register_c_function(vm, "dump", dump);
+	// vm_register_c_function(vm, "spawnstruct", spawnstruct);
+	// vm_register_c_function(vm, "getentarray", spawnstruct);
+	// vm_register_c_function(vm, "getaiarray", spawnstruct);
+	// vm_register_c_function(vm, "getspawnerarray", spawnstruct);
+	// vm_register_c_function(vm, "getallvehiclenodes", spawnstruct);
+	// vm_register_c_function(vm, "getvehiclenodearray", spawnstruct);
+	// vm_register_c_function(vm, "getnodearray", spawnstruct);
+	// vm_register_c_function(vm, "getspawnerteamarray", spawnstruct);
+	// vm_register_c_function(vm, "getallnodes", spawnstruct);
+	// vm_register_c_function(vm, "newhudelem", spawnstruct);
+	// vm_register_c_function(vm, "getnode", getnode);
+	// vm_register_c_function(vm, "getent", getent);
+	// vm_register_c_function(vm, "substr", substr);
+	// vm_register_c_function(vm, "byteat", byteat);
+	// vm_register_c_function(vm, "int", int_);
+	// vm_register_c_function(vm, "float", float_);
+	// vm_register_c_function(vm, "spawn", spawn);
+	// vm_register_c_function(vm, "gettime", gettime);
 
-	vm_register_c_function(vm, "randomint", randomint);
-	vm_register_c_function(vm, "vectornormalize", vectornormalize);
-	vm_register_c_function(vm, "vectorscale", vectorscale);
-	vm_register_c_function(vm, "vectortoangles", vectortoangles);
-	vm_register_c_function(vm, "vec3", vec3_);
-	vm_register_c_function(vm, "anglestoforward", anglestoforward);
-	vm_register_c_function(vm, "tolower", tolower_);
-	vm_register_c_function(vm, "toupper", toupper_);
-	vm_register_c_function(vm, "assertex", dummy_0);
-	vm_register_c_function(vm, "precachemodel", dummy_0);
-	vm_register_c_function(vm, "assert", assert_);
-	vm_register_c_function(vm, "precacheshellshock", dummy_0);
-	vm_register_c_function(vm, "precacherumble", dummy_0);
-	vm_register_c_function(vm, "precachestring", dummy_0);
-	vm_register_c_function(vm, "precacheitem", dummy_0);
-	vm_register_c_function(vm, "precachevehicle", dummy_0);
-	vm_register_c_function(vm, "precacheturret", dummy_0);
-	vm_register_c_function(vm, "precachemenu", dummy_0);
-	vm_register_c_function(vm, "precacheshader", dummy_0);
+	// vm_register_c_function(vm, "randomint", randomint);
+	// vm_register_c_function(vm, "vectornormalize", vectornormalize);
+	// vm_register_c_function(vm, "vectorscale", vectorscale);
+	// vm_register_c_function(vm, "vectortoangles", vectortoangles);
+	// vm_register_c_function(vm, "vec3", vec3_);
+	// vm_register_c_function(vm, "anglestoforward", anglestoforward);
+	// vm_register_c_function(vm, "tolower", tolower_);
+	// vm_register_c_function(vm, "toupper", toupper_);
+	// vm_register_c_function(vm, "assertex", dummy_0);
+	// vm_register_c_function(vm, "precachemodel", dummy_0);
+	// vm_register_c_function(vm, "assert", assert_);
+	// vm_register_c_function(vm, "precacheshellshock", dummy_0);
+	// vm_register_c_function(vm, "precacherumble", dummy_0);
+	// vm_register_c_function(vm, "precachestring", dummy_0);
+	// vm_register_c_function(vm, "precacheitem", dummy_0);
+	// vm_register_c_function(vm, "precachevehicle", dummy_0);
+	// vm_register_c_function(vm, "precacheturret", dummy_0);
+	// vm_register_c_function(vm, "precachemenu", dummy_0);
+	// vm_register_c_function(vm, "precacheshader", dummy_0);
 	// TODO: FIXME this shouldn't be a builtin function I think, there's probably some bug
 	// in the compiler/"linker" or a standard included file isn't set, I don't know
-	vm_register_c_function(vm, "donotetracks", dummy_0);
-	vm_register_c_function(vm, "prof_begin", dummy_0);
-	vm_register_c_function(vm, "prof_end", dummy_0);
-	vm_register_c_function(vm, "playfx", spawnstruct); // should return a FX entity
-	vm_register_c_function(vm, "playfxontag", spawnstruct); // should return a FX entity
-	vm_register_c_function(vm, "objective_add", spawnstruct);
-	vm_register_c_function(vm, "objective_current", spawnstruct);
-	vm_register_c_function(vm, "spawnvehicle", getent);
-	vm_register_c_function(vm, "ambientplay", dummy_0);
-	vm_register_c_function(vm, "getvehiclenode", dummy_0);
-	vm_register_c_function(vm, "earthquake", dummy_0);
-	vm_register_c_function(vm, "issentient", issentient);
-	vm_register_c_function(vm, "musicplay", dummy_0);
-	vm_register_c_function(vm, "loadfx", dummy_ret_1);
-	vm_register_c_function(vm, "playloopedfx", dummy_ret_1);
-	vm_register_c_function(vm, "getdifficulty", dummy_ret_0);
-	vm_register_c_function(vm, "getkeybinding", getkeybinding);
-	vm_register_c_function(vm, "getweaponmodel", getweaponmodel);
-	vm_register_c_function(vm, "objective_string", objective_string);
-	vm_register_c_function(vm, "isalive", isalive);
-	vm_register_c_function(vm, "randomfloat", randomfloat);
+	// vm_register_c_function(vm, "donotetracks", dummy_0);
+	// vm_register_c_function(vm, "prof_begin", dummy_0);
+	// vm_register_c_function(vm, "prof_end", dummy_0);
+	// vm_register_c_function(vm, "playfx", spawnstruct); // should return a FX entity
+	// vm_register_c_function(vm, "playfxontag", spawnstruct); // should return a FX entity
+	// vm_register_c_function(vm, "objective_add", spawnstruct);
+	// vm_register_c_function(vm, "objective_current", spawnstruct);
+	// vm_register_c_function(vm, "spawnvehicle", getent);
+	// vm_register_c_function(vm, "ambientplay", dummy_0);
+	// vm_register_c_function(vm, "getvehiclenode", dummy_0);
+	// vm_register_c_function(vm, "earthquake", dummy_0);
+	// vm_register_c_function(vm, "issentient", issentient);
+	// vm_register_c_function(vm, "musicplay", dummy_0);
+	// vm_register_c_function(vm, "loadfx", dummy_ret_1);
+	// vm_register_c_function(vm, "playloopedfx", dummy_ret_1);
+	// vm_register_c_function(vm, "getdifficulty", dummy_ret_0);
+	// vm_register_c_function(vm, "getkeybinding", getkeybinding);
+	// vm_register_c_function(vm, "getweaponmodel", getweaponmodel);
+	// vm_register_c_function(vm, "objective_string", objective_string);
+	// vm_register_c_function(vm, "isalive", isalive);
+	// vm_register_c_function(vm, "randomfloat", randomfloat);
 
-	vm_register_c_method(vm, "endon", endon);
-	vm_register_c_method(vm, "waittill", waittill);
-	vm_register_c_method(vm, "waittillmatch", waittillmatch);
-	vm_register_c_method(vm, "notify", notify);
-	vm_register_c_method(vm, "giveweapon", giveweapon);
-	vm_register_c_method(vm, "switchtoweapon", dummy_method);
-	vm_register_c_method(vm, "switchtooffhand", dummy_method);
-	vm_register_c_method(vm, "setnormalhealth", dummy_method);
-	vm_register_c_method(vm, "takeallweapons", dummy_method);
-	vm_register_c_method(vm, "setweaponclipammo", dummy_method);
-	vm_register_c_method(vm, "pushplayer", dummy_method);
-	vm_register_c_method(vm, "setviewmodel", dummy_method);
-	vm_register_c_method(vm, "rotateyaw", dummy_method);
-	vm_register_c_method(vm, "rotatepitch", dummy_method);
-	vm_register_c_method(vm, "rotateroll", dummy_method);
-	vm_register_c_method(vm, "hide", dummy_method);
-	vm_register_c_method(vm, "show", dummy_method);
-	vm_register_c_method(vm, "setcandamage", dummy_method);
-	vm_register_c_method(vm, "notsolid", dummy_method);
-	vm_register_c_method(vm, "solid", dummy_method);
-	vm_register_c_method(vm, "animscripted", dummy_method);
-	vm_register_c_method(vm, "useanimtree", dummy_method);
-	vm_register_c_method(vm, "setflaggedanim", dummy_method);
-	vm_register_c_method(vm, "setmodel", setmodel);
-	vm_register_c_method(vm, "setorigin", dummy_method);
-	vm_register_c_method(vm, "setplayerangles", dummy_method);
-	vm_register_c_method(vm, "disconnectpaths", dummy_method);
-	vm_register_c_method(vm, "gettagorigin", gettagorigin);
-	vm_register_c_method(vm, "gettagangles", gettagangles);
-	vm_register_c_method(vm, "linkto", dummy_method);
-	vm_register_c_method(vm, "playsound", dummy_method);
-	vm_register_c_method(vm, "setturretignoregoals", dummy_method);
-	vm_register_c_method(vm, "playloopsound", dummy_method);
-	vm_register_c_method(vm, "sethintstring", dummy_method);
-	vm_register_c_method(vm, "playerlinktodelta", dummy_method);
-	vm_register_c_method(vm, "allowleanleft", dummy_method);
-	vm_register_c_method(vm, "allowleanright", dummy_method);
-	vm_register_c_method(vm, "allowprone", dummy_method);
-	vm_register_c_method(vm, "setshadowhint", dummy_method);
-	vm_register_c_method(vm, "setturrettargetent", dummy_method);
-	vm_register_c_method(vm, "attachpath", dummy_method);
-	vm_register_c_method(vm, "startpath", dummy_method);
-	vm_register_c_method(vm, "setspeed", dummy_method);
-	vm_register_c_method(vm, "setwaitnode", dummy_method);
+	// vm_register_c_method(vm, "endon", endon);
+	// vm_register_c_method(vm, "waittill", waittill);
+	// vm_register_c_method(vm, "waittillmatch", waittillmatch);
+	// vm_register_c_method(vm, "notify", notify);
+	// vm_register_c_method(vm, "giveweapon", giveweapon);
+	// vm_register_c_method(vm, "switchtoweapon", dummy_method);
+	// vm_register_c_method(vm, "switchtooffhand", dummy_method);
+	// vm_register_c_method(vm, "setnormalhealth", dummy_method);
+	// vm_register_c_method(vm, "takeallweapons", dummy_method);
+	// vm_register_c_method(vm, "setweaponclipammo", dummy_method);
+	// vm_register_c_method(vm, "pushplayer", dummy_method);
+	// vm_register_c_method(vm, "setviewmodel", dummy_method);
+	// vm_register_c_method(vm, "rotateyaw", dummy_method);
+	// vm_register_c_method(vm, "rotatepitch", dummy_method);
+	// vm_register_c_method(vm, "rotateroll", dummy_method);
+	// vm_register_c_method(vm, "hide", dummy_method);
+	// vm_register_c_method(vm, "show", dummy_method);
+	// vm_register_c_method(vm, "setcandamage", dummy_method);
+	// vm_register_c_method(vm, "notsolid", dummy_method);
+	// vm_register_c_method(vm, "solid", dummy_method);
+	// vm_register_c_method(vm, "animscripted", dummy_method);
+	// vm_register_c_method(vm, "useanimtree", dummy_method);
+	// vm_register_c_method(vm, "setflaggedanim", dummy_method);
+	// vm_register_c_method(vm, "setmodel", setmodel);
+	// vm_register_c_method(vm, "setorigin", dummy_method);
+	// vm_register_c_method(vm, "setplayerangles", dummy_method);
+	// vm_register_c_method(vm, "disconnectpaths", dummy_method);
+	// vm_register_c_method(vm, "gettagorigin", gettagorigin);
+	// vm_register_c_method(vm, "gettagangles", gettagangles);
+	// vm_register_c_method(vm, "linkto", dummy_method);
+	// vm_register_c_method(vm, "playsound", dummy_method);
+	// vm_register_c_method(vm, "setturretignoregoals", dummy_method);
+	// vm_register_c_method(vm, "playloopsound", dummy_method);
+	// vm_register_c_method(vm, "sethintstring", dummy_method);
+	// vm_register_c_method(vm, "playerlinktodelta", dummy_method);
+	// vm_register_c_method(vm, "allowleanleft", dummy_method);
+	// vm_register_c_method(vm, "allowleanright", dummy_method);
+	// vm_register_c_method(vm, "allowprone", dummy_method);
+	// vm_register_c_method(vm, "setshadowhint", dummy_method);
+	// vm_register_c_method(vm, "setturrettargetent", dummy_method);
+	// vm_register_c_method(vm, "attachpath", dummy_method);
+	// vm_register_c_method(vm, "startpath", dummy_method);
+	// vm_register_c_method(vm, "setspeed", dummy_method);
+	// vm_register_c_method(vm, "setwaitnode", dummy_method);
 
 	// hud element methods
-	vm_register_c_method(vm, "setshader", dummy_method);
-	vm_register_c_method(vm, "fadeovertime", dummy_method);
+	// vm_register_c_method(vm, "setshader", dummy_method);
+	// vm_register_c_method(vm, "fadeovertime", dummy_method);
 }

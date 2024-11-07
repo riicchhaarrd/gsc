@@ -27,6 +27,7 @@
 	X(WAIT)        \
 	X(UNARY)       \
 	X(VECTOR)      \
+	X(PRINT_EXPR)      \
 	X(GLOB)
  // X(SELF)
 
@@ -98,7 +99,7 @@ typedef struct
 	OperandType type;
 	union
 	{
-		int integer;
+		int64_t integer;
 		float number;
 		unsigned int string_index;
 	} value;

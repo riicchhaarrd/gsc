@@ -10,7 +10,7 @@ typedef ASTNode* ASTNodePtr;
 typedef union
 {
 	char *string;
-	int integer;
+	int64_t integer;
 	float number;
 	float vector[4];
 	bool boolean;

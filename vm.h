@@ -11,6 +11,7 @@
 #include <core/ds/hash_trie.h>
 #include <core/ds/object_pool.h>
 #include "string_table.h"
+#include "include/gsc.h"
 
 // #define VM_THREAD_ID_INVALID (-1)
 // typedef int VMThreadId;
@@ -43,11 +44,26 @@ struct ObjectField
 	ObjectField *child[4];
 	const char *key;
 	Variable *value;
+    // void *getter, *setter;
 	ObjectField *next;
 };
 enum { sizeof_ObjectField = sizeof(ObjectField) };
 
+// Lua has metatables and JavaScript has prototypes and other languages have other namings for it like magic functions
+// I would call it a template, but this keyword is reserved in C++
+// It all boils down to the same thing really but I guess I'll just go with the word proxy or prototype, an alternative would be blueprint
+// Prototypes in JavaScript are objects, this allows for defining them in the language itself, but in this case I'll just opt for the simpler pointer interface
+// I guess I could change it in the future if need be, considering object prototypes are more powerful
+
 typedef struct Object Object;
+
+typedef struct
+{
+	const char *file;
+	const char *function;
+	int line;
+} gsc_DebugInfo;
+
 struct Object
 {
     ObjectField **tail;
@@ -56,12 +72,15 @@ struct Object
     // Maybe set it _on_ the object itself as a ObjectField with a underscore post/pre fix?
     // Just to save 4/8 bytes lol
     int refcount;
+    const char *tag;
+    void *userdata;
+    // Object *base;
+    Object *proxy;
+    gsc_DebugInfo debug_info;
 };
 enum { sizeof_Object = sizeof(Object) };
 
 ObjectField *vm_object_upsert(VM *vm, Object *obj, const char *key);
-
-typedef int (*vm_CMethod)(VM *, Object *self);
 
 typedef struct
 {
@@ -79,10 +98,19 @@ typedef union
     float vval[3];
     struct
     {
-        int file;
-        int function;
-    } funval;
+        bool is_native;
+        union
+		{
+			struct
+			{
+				int file;
+				int function;
+			};
+            gsc_Function native_function;
+		};
+	} funval;
     Variable *refval;
+    //void *getter, *setter;
 } VariableValue;
 #pragma pack(pop)
 enum { sizeof_VariableValue = sizeof(VariableValue) };
@@ -155,6 +183,7 @@ typedef struct
     struct{
 		const char *file, *function;
 	} caller;
+    Variable *return_value;
 } Thread;
 
 enum { sizeof_Thread = sizeof(Thread) };
@@ -183,10 +212,12 @@ struct VM
     
     // size_t thread_count;
     Thread *thread;
+    Thread temp_thread;
     VMEvent events[VM_MAX_EVENTS_PER_FRAME];
     size_t event_count;
 	int flags;
     Variable globals[VAR_GLOB_MAX];
+    Variable global_object;
 	// Variable level;
     // Variable game;
 	// Arena arena;
@@ -206,9 +237,18 @@ struct VM
 	} pool;
 	void *ctx;
     StringTable *strings;
-    HashTrie c_functions;
-    HashTrie c_methods;
+    HashTrie callback_functions;
+    // HashTrie callback_methods;
 	CompiledFunction *(*func_lookup)(void *ctx, const char *file, const char *function);
+
+    gsc_DebugInfo debug_info;
+
+    int nargs, fsp;
+
+    // struct
+    // {
+    //     int __call;
+    // } string_index;
 };
 
 // typedef struct
@@ -222,18 +262,31 @@ bool vm_call_function_thread(VM *vm, const char *file, const char *function, siz
 bool vm_run_threads(VM *vm, float dt);
 void vm_init(VM *vm, Allocator *allocator, StringTable *strtab);
 void vm_cleanup(VM*);
+
+void vm_register_callback_function(VM *vm, const char *name, void *callback, void *ctx);
 void vm_register_c_function(VM *vm, const char *name, vm_CFunction callback);
-void vm_register_c_method(VM *vm, const char *name, vm_CMethod callback);
+
 const char *vm_stringify(VM *vm, Variable *v, char *buf, size_t n);
 size_t vm_argc(VM *vm);
 Variable *vm_argv(VM *vm, int idx);
 Variable vm_create_object(VM *vm);
 void vm_pushvar(VM *vm, Variable*);
-void vm_pushobject(VM *vm, Object *o);
+int vm_pushobject(VM *vm, Object *o);
 Thread *vm_thread(VM*);
 void vm_print_thread_info(VM *vm);
 void vm_notify(VM *vm, Object *object, const char *key, size_t nargs);
 void vm_error(VM *vm, const char *fmt, ...);
 // Variable* vm_dup(VM *vm, Variable* v);
-ObjectField *vm_set_object_field(VM *vm, Object *o, const char *key, Variable *value);
+void vm_set_object_field(VM *vm, int obj_index, const char *key);
+void vm_get_object_field(VM *vm, int obj_index, const char *key);
 uint32_t vm_random(VM *vm);
+Variable vm_pop(VM *vm);
+Variable *vm_stack(VM *vm, int idx);
+Variable *vm_stack_top(VM *vm, int idx);
+
+bool vm_cast_bool(VM *vm, Variable *arg);
+int64_t vm_cast_int(VM *vm, Variable *arg);
+float vm_cast_float(VM *vm, Variable *arg);
+void vm_cast_vector(VM *vm, Variable *arg, float *outvec);
+const char *vm_cast_string(VM *vm, Variable *arg);
+Object *vm_cast_object(VM *vm, Variable *arg);

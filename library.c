@@ -10,7 +10,7 @@
 
 #define SMALL_STACK_SIZE (16)
 
-struct gsc_State
+struct gsc_Context
 {
 	HashTrie files;
 	
@@ -22,7 +22,7 @@ struct gsc_State
 	// HashTrie c_functions;
 	// HashTrie c_methods;
 
-	Variable small_stack[SMALL_STACK_SIZE];
+	// Variable small_stack[SMALL_STACK_SIZE];
 	int sp;
 
 	bool error;
@@ -34,9 +34,11 @@ struct gsc_State
 	VM *vm;
 
 	jmp_buf jmp_oom;
+
+	Object *default_object_proxy;
 };
 
-CompiledFile *find_or_create_compiled_file(gsc_State *state, const char *path)
+CompiledFile *find_or_create_compiled_file(gsc_Context *state, const char *path)
 {
 	HashTrieNode *entry = hash_trie_upsert(&state->files, path, &state->allocator, false);
 	if(!entry->value)
@@ -52,12 +54,12 @@ CompiledFile *find_or_create_compiled_file(gsc_State *state, const char *path)
 	return entry->value;
 }
 
-CompiledFile *compile(gsc_State *state, const char *path, const char *data)
+CompiledFile *compile(gsc_Context *state, const char *path, const char *data, int flags)
 {
 	CompiledFile *cf = find_or_create_compiled_file(state, path);
 	if(cf->state != COMPILE_STATE_NOT_STARTED)
 		return cf;
-	int status = compile_file(path, data, cf, &state->perm, state->temp, &state->strtab);
+	int status = compile_file(path, data, cf, &state->perm, state->temp, &state->strtab, flags);
 	cf->state = status == 0 ? COMPILE_STATE_DONE : COMPILE_STATE_FAILED;
 	if(cf->state != COMPILE_STATE_DONE)
 		return cf;
@@ -80,7 +82,7 @@ CompiledFile *compile(gsc_State *state, const char *path, const char *data)
 	return cf;
 }
 
-static int error(gsc_State *state, const char *fmt, ...)
+static int error(gsc_Context *state, const char *fmt, ...)
 {
 	state->error = true;
 	va_list va;
@@ -99,23 +101,23 @@ static int error(gsc_State *state, const char *fmt, ...)
 #define CHECK_ERROR(state) \
 	if(state->error)       \
 	{                      \
-		return 1;          \
+		return GSC_ERROR;  \
 	}
 
 static void *gsc_malloc(void *ctx, size_t size)
 {
-	gsc_State *state = (gsc_State*)ctx;
+	gsc_Context *state = (gsc_Context*)ctx;
 	return new(&state->perm, char, size);
 	// return state->options.allocate_memory(state->options.userdata, size);
 }
 
 static void gsc_free(void *ctx, void *ptr)
 {
-	gsc_State *state = (gsc_State*)ctx;
+	gsc_Context *state = (gsc_Context*)ctx;
 	// state->options.free_memory(state->options.userdata, ptr);
 }
 
-static CompiledFile *get_file(gsc_State *state, const char *file)
+static CompiledFile *get_file(gsc_Context *state, const char *file)
 {
 	HashTrieNode *n = hash_trie_upsert(&state->files, file, NULL, false);
 	if(!n)
@@ -126,7 +128,7 @@ static CompiledFile *get_file(gsc_State *state, const char *file)
 	return cf;
 }
 
-static CompiledFunction *get_function(gsc_State *state, const char *file, const char *function)
+static CompiledFunction *get_function(gsc_Context *state, const char *file, const char *function)
 {
 	CompiledFile *f = get_file(state, file);
 	if(!f)
@@ -139,17 +141,161 @@ static CompiledFunction *get_function(gsc_State *state, const char *file, const 
 
 static CompiledFunction *vm_func_lookup(void *ctx, const char *file, const char *function)
 {
-	gsc_State *state = (gsc_State*)ctx;
+	gsc_Context *state = (gsc_Context*)ctx;
 	return get_function(state, file, function);
 }
 
-gsc_State *gsc_create(gsc_CreateOptions options)
+static int f_endon(gsc_Context *ctx)
 {
-	gsc_State *ctx = options.allocate_memory(options.userdata, sizeof(gsc_State));
-	memset(ctx, 0, sizeof(gsc_State));
+	VM *vm = ctx->vm;
+	Object *self = vm_cast_object(ctx->vm, vm_argv(ctx->vm, -1));
+	const char *key = vm_checkstring(vm, 0);
+	Thread *thr = vm_thread(vm);
+	int idx = vm_string_index(vm, key);
+	buf_push(thr->endon, idx);
+	return 0;
+}
+
+// TODO: wait for animation event / notetracks
+// Hack: prefix with anim_ and notify when animation is done / encounters a notetrack
+
+static int f_waittillmatch(gsc_Context *ctx)
+{
+	VM *vm = ctx->vm;
+	Object *self = vm_cast_object(ctx->vm, vm_argv(ctx->vm, -1));
+	const char *key = vm_checkstring(vm, 0);
+	char fake_key[256];
+	snprintf(fake_key, sizeof(fake_key), "$nt_%s", key);
+	Thread *thr = vm_thread(vm);
+	thr->state = VM_THREAD_WAITING_EVENT;
+	thr->waittill.arguments = NULL;
+	thr->waittill.name = vm_string_index(vm, fake_key);
+	thr->waittill.object = self;
+	if(thr->waittill.name == -1)
+	{
+		vm_error(vm, "Key '%s' not found", fake_key);
+	}
+	return 0;
+}
+
+static int f_waittill(gsc_Context *ctx)
+{
+	VM *vm = ctx->vm;
+	Object *self = vm_cast_object(ctx->vm, vm_argv(ctx->vm, -1));
+	const char *key = vm_checkstring(vm, 0);
+	Thread *thr = vm_thread(vm);
+	thr->state = VM_THREAD_WAITING_EVENT;
+	thr->waittill.arguments = NULL;
+	thr->waittill.name = vm_string_index(vm, key);
+	thr->waittill.object = self;
+	if(thr->waittill.name == -1)
+	{
+		vm_error(vm, "Key '%s' not found", key);
+	}
+	// printf("[VM] TODO implement waittill: %s\n", key);
+	return 0;
+}
+
+static int f_notify(gsc_Context *ctx)
+{
+	VM *vm = ctx->vm;
+	Object *self = vm_cast_object(ctx->vm, vm_argv(ctx->vm, -1));
+	const char *key = vm_checkstring(vm, 0);
+	Thread *thr = vm_thread(vm);
+	// vm_notify(vm, vm_dup(vm, &thr->frame->self), key, vm_argc(vm));
+	vm_notify(vm, self, key, 0);
+	return 0;
+}
+
+int gsc_add_tagged_object(gsc_Context *ctx, const char *tag)
+{
+	Variable v = vm_create_object(ctx->vm);
+	Object *o = v.u.oval;
+	o->tag = tag;
+	// o->proxy = NULL;
+	o->proxy = ctx->default_object_proxy;
+	// o->userdata = NULL;
+	return vm_pushobject(ctx->vm, o);
+}
+
+int gsc_add_object(gsc_Context *ctx)
+{
+	return gsc_add_tagged_object(ctx, NULL);
+}
+
+void gsc_object_set_proxy(gsc_Context *ctx, int obj_index, int proxy_index)
+{
+	Variable *ov = vm_stack(ctx->vm, obj_index);
+	if(ov->type != VAR_OBJECT)
+		vm_error(ctx->vm, "'%s' is not a object", variable_type_names[ov->type]);
+	Object *o = ov->u.oval;
+	Variable *pv = vm_stack(ctx->vm, proxy_index);
+	o->proxy = pv->u.oval;
+}
+
+int gsc_object_get_proxy(gsc_Context *ctx, int obj_index)
+{
+	Variable *ov = vm_stack(ctx->vm, obj_index);
+	if(ov->type != VAR_OBJECT)
+		vm_error(ctx->vm, "'%s' is not a object", variable_type_names[ov->type]);
+	Object *o = ov->u.oval;
+	if(!o->proxy)
+	{
+		return 0;
+	}
+	vm_pushobject(ctx->vm, o->proxy);
+	return 1;
+}
+
+// void gsc_new_object(gsc_Context *ctx, gsc_ObjectProxy *proxy, void *userdata)
+// {
+// 	Variable v = vm_create_object(ctx->vm);
+// 	Object *o = v.u.oval;
+// 	o->proxy = proxy;
+// 	o->userdata = userdata;
+// 	vm_pushobject(ctx->vm, o);
+// }
+
+const char *gsc_string(gsc_Context *ctx, int index)
+{
+	return string_table_get(ctx->vm->strings, index);
+}
+
+int gsc_register_string(gsc_Context *ctx, const char *s)
+{
+	return vm_string_index(ctx->vm, s);
+}
+
+static void create_default_object_proxy(gsc_Context *ctx)
+{
+	ctx->default_object_proxy = NULL;
+
+	int proxy = gsc_add_tagged_object(ctx, "object");
+	ctx->default_object_proxy = vm_stack_top(ctx->vm, -1)->u.oval;
+
+	ctx->vm->globals[VAR_GLOB_LEVEL].u.oval->proxy = ctx->default_object_proxy;
+
+	int methods = gsc_add_object(ctx);
+		gsc_add_function(ctx, f_waittill);
+		gsc_object_set_field(ctx, methods, "waittill");
+		gsc_add_function(ctx, f_endon);
+		gsc_object_set_field(ctx, methods, "endon");
+		gsc_add_function(ctx, f_notify);
+		gsc_object_set_field(ctx, methods, "notify");
+		gsc_add_function(ctx, f_waittillmatch);
+		gsc_object_set_field(ctx, methods, "waittillmatch");
+	gsc_object_set_field(ctx, proxy, "__call");
+
+	gsc_set_global(ctx, "object");
+}
+
+gsc_Context *gsc_create(gsc_CreateOptions options)
+{
+	gsc_Context *ctx = options.allocate_memory(options.userdata, sizeof(gsc_Context));
+	memset(ctx, 0, sizeof(gsc_Context));
 	ctx->options = options;
 
-	if(setjmp(&ctx->jmp_oom))
+	if(setjmp(ctx->jmp_oom))
 	{
 		return NULL;
 	}
@@ -163,7 +309,8 @@ gsc_State *gsc_create(gsc_CreateOptions options)
 	// hash_trie_init(&ctx->c_methods);
 
 	// TODO: FIXME
-	#define HEAP_SIZE (28 * 1024 * 1024)
+	#define HEAP_SIZE (512 * 1024 * 1024)
+	// #define HEAP_SIZE (28 * 1024 * 1024)
 	// #define HEAP_SIZE (85 * 1024 * 1024)
 	// #define HEAP_SIZE (83 * 1024 * 1024)
 	ctx->heap = options.allocate_memory(options.userdata, HEAP_SIZE);
@@ -195,10 +342,11 @@ gsc_State *gsc_create(gsc_CreateOptions options)
 	register_dummy_c_functions(vm);
 
 	ctx->vm = vm;
+	create_default_object_proxy(ctx);
 	return ctx;
 }
 
-void gsc_destroy(gsc_State *state)
+void gsc_destroy(gsc_Context *state)
 {
 	if(state)
 	{
@@ -210,21 +358,95 @@ void gsc_destroy(gsc_State *state)
 		opts.free_memory(opts.userdata, state);
 	}
 }
-void gsc_register_function(gsc_State *state, const char *namespace, const char *name, gsc_Function callback)
+
+void gsc_register_function(gsc_Context *state, const char *namespace, const char *name, gsc_Function callback)
 {
-	hash_trie_upsert(&state->vm->c_functions, name, &state->allocator, false)->value = callback;
+	vm_register_callback_function(state->vm, name, (void*)callback, state);
 }
 
-void gsc_register_method(gsc_State *state, const char *namespace, const char *name, gsc_Method callback)
+void *gsc_object_get_userdata(gsc_Context *ctx, int obj_index)
 {
-	hash_trie_upsert(&state->vm->c_methods, name, &state->allocator, false)->value = callback;
+	Variable *ov = vm_stack(ctx->vm, obj_index);
+	if(ov->type != VAR_OBJECT)
+		vm_error(ctx->vm, "'%s' is not a object", variable_type_names[ov->type]);
+	Object *o = ov->u.oval;
+	return o->userdata;
 }
 
-void gsc_object_set_field(gsc_State *state, gsc_Object *, const char *name)
+void gsc_object_set_userdata(gsc_Context *ctx, int obj_index, void *userdata)
 {
+	Variable *ov = vm_stack(ctx->vm, obj_index);
+	if(ov->type != VAR_OBJECT)
+		vm_error(ctx->vm, "'%s' is not a object", variable_type_names[ov->type]);
+	Object *o = ov->u.oval;
+	o->userdata = userdata;
 }
 
-int gsc_link(gsc_State *state)
+// void gsc_register_method(gsc_Context *state, const char *namespace, const char *name, gsc_Method callback)
+// {
+// 	vm_register_callback_method(state->vm, name, (void*)callback, state);
+// }
+
+// void *gsc_object_userdata(gsc_Object *ptr)
+// {
+// 	Object *object = (Object*)ptr;
+//     return object->userdata;
+// }
+
+// gsc_ObjectProxy *gsc_object_get_proxy(gsc_Object *ptr)
+// {
+// 	Object *object = (Object *)ptr;
+// 	return object->proxy;
+// }
+
+// void gsc_object_set_proxy(gsc_Context *ctx, gsc_Object *ptr, gsc_ObjectProxy *proxy)
+// {
+// 	Object *object = (Object*)ptr;
+//     object->proxy = proxy;
+// }
+
+// void gsc_object_set_userdata(gsc_Context *ctx, gsc_Object *ptr, void *userdata)
+// {
+// 	Object *object = (Object*)ptr;
+//     object->userdata = userdata;
+// }
+
+void gsc_object_set_field(gsc_Context *state, int obj_index, const char *name)
+{
+	// Variable value = vm_pop(state->vm);
+	vm_set_object_field(state->vm, obj_index, name);
+	// vm_set_object_field(state->vm, (Object *)object, name, &value);
+}
+
+void gsc_object_get_field(gsc_Context *state, int obj_index, const char *name)
+{
+	vm_get_object_field(state->vm, obj_index, name);
+}
+
+void gsc_set_global(gsc_Context *ctx, const char *name)
+{
+	void set_object_field(VM *vm, Variable *ov, const char *key);
+	set_object_field(ctx->vm, &ctx->vm->global_object, name);
+	// ObjectField *entry = vm_object_upsert(ctx->vm, &ctx->vm->global_object, string(ctx->vm, name));
+	// *entry->value = vm_pop(ctx->vm);
+}
+
+int gsc_get_global(gsc_Context *ctx, const char *name)
+{
+	void get_object_field(VM *vm, Variable *ov, const char *key);
+	get_object_field(ctx->vm, &ctx->vm->global_object, name);
+	// ObjectField *entry = vm_object_upsert(NULL, &ctx->vm->global_object, string(ctx->vm, name));
+	// if(!entry)
+	// {
+	// 	vm_pushundefined(ctx->vm);
+	// } else
+	// {
+	// 	vm_pushvar(ctx->vm, entry->value);
+	// }
+	return gsc_top(ctx) - 1;
+}
+
+int gsc_link(gsc_Context *state)
 {
 	CHECK_OOM(state);
 	Allocator perm_allocator = arena_allocator(&state->perm);
@@ -258,14 +480,16 @@ int gsc_link(gsc_State *state)
 	return GSC_OK;
 }
 
-int gsc_compile(gsc_State *state, const char *filename)
+int gsc_compile_source(gsc_Context *state, const char *filename, const char *source, int flags)
 {
-	int status = GSC_OK;
-	const char *source = state->options.read_file(state->options.userdata, filename, &status);
-	if(status != GSC_OK)
-		return status;
+	char basename[256];
+	char *sep = strrchr(filename, '.');
+	if(sep)
+	{
+		snprintf(basename, sizeof(basename), "%.*s", (int)(sep - filename), filename);
+	}
 	CHECK_OOM(state);
-	CompiledFile *cf = compile(state, filename, source);
+	CompiledFile *cf = compile(state, sep ? basename : filename, source, flags);
 	switch(cf->state)
 	{
 		case COMPILE_STATE_DONE: return GSC_OK;
@@ -287,10 +511,24 @@ int gsc_compile(gsc_State *state, const char *filename)
 	// 	if(done)
 	// 		break;
 	// }
-	return status;
+	return GSC_OK;
 }
 
-const char *gsc_next_compile_dependency(gsc_State *state)
+int gsc_compile(gsc_Context *state, const char *filename, int flags)
+{
+	int status = GSC_OK;
+	const char *source = state->options.read_file(state->options.userdata, filename, &status);
+	if(status != GSC_OK)
+		return status;
+	return gsc_compile_source(state, filename, source, flags);
+}
+
+void *gsc_temp_alloc(gsc_Context *ctx, int size)
+{
+	return new(&ctx->vm->c_function_arena, char, size);
+}
+
+const char *gsc_next_compile_dependency(gsc_Context *state)
 {
 	for(HashTrieNode *it = state->files.head; it; it = it->next)
 	{
@@ -301,7 +539,7 @@ const char *gsc_next_compile_dependency(gsc_State *state)
 	return NULL;
 }
 
-static void info(gsc_State *state)
+static void info(gsc_Context *state)
 {
 	printf("[INFO] heap %.2f/%.2f MB available\n",
 		   arena_available_mib(&state->perm),
@@ -316,7 +554,8 @@ static void info(gsc_State *state)
 	printf("[INFO] %d threads\n", thread_count(state->vm));
 }
 
-int gsc_update(gsc_State *state, int delta_time)
+int gsc_update(gsc_Context *state, float dt)
+// int gsc_update(gsc_Context *state, int delta_time)
 {
 	// const char **states[] = { [COMPILE_STATE_NOT_STARTED] = "not started",
 	// 						  [COMPILE_STATE_DONE] = "done",
@@ -333,7 +572,6 @@ int gsc_update(gsc_State *state, int delta_time)
 	// }
 	// // getchar();
 	CHECK_ERROR(state);
-	float dt = 1.f / (float)delta_time;
 	CHECK_OOM(state);
 	if(!vm_run_threads(state->vm, dt))
 		return GSC_OK;
@@ -346,7 +584,7 @@ int gsc_update(gsc_State *state, int delta_time)
 	return GSC_YIELD;
 }
 
-int gsc_call(gsc_State *state, const char *namespace, const char *function, int nargs)
+int gsc_call(gsc_Context *state, const char *namespace, const char *function, int nargs)
 {
 	CHECK_ERROR(state);
 	//TODO: handle args
@@ -355,49 +593,139 @@ int gsc_call(gsc_State *state, const char *namespace, const char *function, int 
 	return GSC_OK; // TODO: FIXME
 }
 
-void gsc_push(gsc_State *state, void *value)
+void gsc_push(gsc_Context *state, void *value)
 {
-	if(state->sp >= SMALL_STACK_SIZE)
-	{
-		error(state, "Stack pointer >= SMALL_STACK_SIZE");
-		return;
-	}
-	state->small_stack[state->sp++] = *(Variable*)value;
+	vm_pushvar(state->vm, value);
+	// if(state->sp >= SMALL_STACK_SIZE)
+	// {
+	// 	error(state, "Stack pointer >= SMALL_STACK_SIZE");
+	// 	return;
+	// }
+	// state->small_stack[state->sp++] = *(Variable*)value;
 }
 
-void *gsc_pop(gsc_State *state)
+int gsc_top(gsc_Context *ctx)
 {
-	return NULL;
+	return ctx->vm->thread->sp;
 }
 
-void gsc_push_int(gsc_State *state, int value)
+void gsc_error(gsc_Context *ctx, const char *fmt, ...)
 {
+	char message[2048];
+	va_list va;
+	va_start(va, fmt);
+	vsnprintf(message, sizeof(message), fmt, va);
+	va_end(va);
+	vm_error(ctx->vm, "%s", message);
 }
 
-void gsc_push_float(gsc_State *state, float value)
+int gsc_type(gsc_Context *ctx, int index)
 {
+	return vm_stack_top(ctx->vm, index)->type;
 }
 
-void gsc_push_string(gsc_State *state, const char *value)
+int gsc_get_type(gsc_Context *ctx, int index)
 {
+	return vm_argv(ctx->vm, index)->type;
 }
 
-int gsc_to_int(gsc_State *state, int index)
+void gsc_pop(gsc_Context *state, int count)
 {
-	return 0;
+	for(int i = 0; i < count; ++i)
+		vm_pop(state->vm);
 }
 
-float gsc_to_float(gsc_State *state, int index)
+void gsc_add_int(gsc_Context *state, int value)
 {
-	return 0.0f;
+	vm_pushinteger(state->vm, value);
+
+}
+void gsc_add_vec3(gsc_Context *ctx, /*const*/ float *value)
+{
+	vm_pushvector(ctx->vm, value);
 }
 
-const char *gsc_to_string(gsc_State *state, int index)
+void gsc_add_function(gsc_Context *ctx, gsc_Function value)
 {
-	return NULL;
+	Variable v;
+	v.type = VAR_FUNCTION;
+	v.u.funval.is_native = true;
+	v.u.funval.native_function = value;
+	vm_pushvar(ctx->vm, &v);
 }
 
-GSC_API void *gsc_get_internal_pointer(gsc_State *state, const char *tag)
+void gsc_add_bool(gsc_Context *ctx, int cond)
+{
+	vm_pushbool(ctx->vm, cond);
+}
+
+void gsc_add_float(gsc_Context *state, float value)
+{
+	vm_pushfloat(state->vm, value);
+}
+
+void gsc_add_string(gsc_Context *state, const char *value)
+{
+	vm_pushstring(state->vm, value);
+}
+
+int64_t gsc_get_int(gsc_Context *state, int index)
+{
+	return vm_checkinteger(state->vm, index);
+}
+
+int gsc_get_bool(gsc_Context *state, int index)
+{
+	return vm_checkbool(state->vm, index);
+}
+
+void gsc_get_vec3(gsc_Context *ctx, int index, float *v)
+{
+	vm_checkvector(ctx->vm, index, v);
+}
+
+int gsc_get_object(gsc_Context *state, int index)
+{
+	return vm_checkobject(state->vm, index);
+}
+
+int gsc_arg(gsc_Context *ctx, int index)
+{
+	return ctx->vm->fsp - 3 - index;	
+}
+
+int gsc_numargs(gsc_Context *ctx)
+{
+	return ctx->vm->nargs;
+}
+
+float gsc_get_float(gsc_Context *state, int index)
+{
+	return vm_checkfloat(state->vm, index);
+}
+
+int gsc_to_int(gsc_Context *ctx, int index)
+{
+	return vm_cast_int(ctx->vm, vm_stack_top(ctx->vm, index));
+}
+
+float gsc_to_float(gsc_Context *ctx, int index)
+{
+	return vm_cast_float(ctx->vm, vm_stack_top(ctx->vm, index));
+}
+
+const char *gsc_to_string(gsc_Context *ctx, int index)
+{
+	return vm_cast_string(ctx->vm, vm_stack_top(ctx->vm, index));
+}
+
+// Only valid in callback of functions added with gsc_register_function
+const char *gsc_get_string(gsc_Context *state, int index)
+{
+	return vm_checkstring(state->vm, index);
+}
+
+GSC_API void *gsc_get_internal_pointer(gsc_Context *state, const char *tag)
 {
 	if(!strcmp(tag, "vm"))
 	{
