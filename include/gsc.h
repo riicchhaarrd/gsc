@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 
 #if defined(_WIN32) || defined(_WIN64)
 	#if defined(GSC_EXPORTS)
@@ -26,20 +27,25 @@ extern "C"
 		GSC_OUT_OF_MEMORY
 	};
 
+#define GSC_TYPES(X)   \
+	X(UNDEFINED)       \
+	X(STRING)          \
+	X(INTERNED_STRING) \
+	X(INTEGER)         \
+	X(BOOLEAN)         \
+	X(FLOAT)           \
+	X(VECTOR)          \
+	X(FUNCTION)        \
+	X(OBJECT)          \
+	X(REFERENCE)       \
+	X(THREAD)
+
+#define GSC_TYPES_STRINGS(TYPE) #TYPE,
+	static const char *gsc_type_names[] = { GSC_TYPES(GSC_TYPES_STRINGS) NULL };
+#define GSC_TYPES_ENUM(TYPE) GSC_TYPE_##TYPE,
 	enum
 	{
-		GSC_TYPE_UNDEFINED,
-		GSC_TYPE_STRING,
-		GSC_TYPE_INTERNED_STRING,
-		GSC_TYPE_INTEGER,
-		GSC_TYPE_BOOLEAN,
-		GSC_TYPE_FLOAT,
-		GSC_TYPE_VECTOR,
-		GSC_TYPE_FUNCTION,
-		GSC_TYPE_OBJECT,
-		GSC_TYPE_REFERENCE,
-		GSC_TYPE_THREAD,
-		GSC_TYPE_MAX
+		GSC_TYPES(GSC_TYPES_ENUM) GSC_TYPE_MAX
 	};
 
 	typedef struct gsc_Context gsc_Context;
@@ -50,6 +56,9 @@ extern "C"
 		const char *(*read_file)(void *ctx, const char *filename, int *status); // Read file and return status
 		void *userdata;															// User-defined data pointer
 		int verbose;
+		int main_memory_size;
+		int temp_memory_size;
+		int string_table_memory_size;
 	} gsc_CreateOptions;
 
 	GSC_API gsc_Context *gsc_create(gsc_CreateOptions options);
@@ -67,7 +76,12 @@ extern "C"
 	GSC_API void *gsc_temp_alloc(gsc_Context *ctx, int size);
 	GSC_API int gsc_update(gsc_Context *ctx, float dt);
 	GSC_API int gsc_call(gsc_Context *ctx, const char *file, const char *function, int nargs);
-
+	GSC_API int gsc_call_method(gsc_Context *ctx, const char *namespace, const char *function, int nargs);
+	GSC_API void gsc_object_set_debug_info(gsc_Context *ctx,
+										   void *object,
+										   const char *file,
+										   const char *function,
+										   int line);
 	typedef int (*gsc_Function)(gsc_Context *);
 
 	typedef struct
@@ -109,11 +123,15 @@ extern "C"
 	// GSC_API void gsc_object_set_field(gsc_Context *ctx, gsc_Object *, const char *name);
 	GSC_API void gsc_object_set_field(gsc_Context *ctx, int obj_index, const char *name);
 	GSC_API void gsc_object_get_field(gsc_Context *ctx, int obj_index, const char *name);
+	GSC_API const char *gsc_object_get_tag(gsc_Context *ctx, int obj_index);
 
 	GSC_API int gsc_top(gsc_Context *ctx);
 	GSC_API int gsc_type(gsc_Context *ctx, int index);
 	GSC_API void gsc_push(gsc_Context *ctx, void *value);
+	GSC_API int gsc_push_object(gsc_Context *ctx, void *value);
 	GSC_API void gsc_pop(gsc_Context *ctx, int count);
+
+	GSC_API void *gsc_allocate_object(gsc_Context *ctx);
 
 	// Push specific types onto the stack
 	GSC_API int gsc_add_object(gsc_Context *ctx); // Push an new object
@@ -152,6 +170,8 @@ extern "C"
 	GSC_API int gsc_get_type(gsc_Context *ctx, int index);
 	GSC_API int gsc_numargs(gsc_Context *ctx);
 	GSC_API int gsc_arg(gsc_Context *ctx, int index);
+
+	GSC_API void* gsc_get_ptr(gsc_Context *ctx, int index);
 
 	GSC_API int gsc_get_global(gsc_Context *ctx, const char *name);
 	GSC_API void gsc_set_global(gsc_Context *ctx, const char *name);
