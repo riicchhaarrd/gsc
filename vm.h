@@ -144,11 +144,15 @@ typedef struct
 #pragma pack(pop)
 enum { sizeof_StackFrame = sizeof(StackFrame) };
 
+#define VM_MAX_EVENT_ARGS (16)
+
 typedef struct
 {
     int name;
     Object *object;
-    Variable *arguments;
+    Variable arguments[VM_MAX_EVENT_ARGS];
+    int numargs;
+    int frame;
 } VMEvent;
 enum { sizeof_VMEvent = sizeof(VMEvent) };
 
@@ -167,7 +171,7 @@ static const char *vm_thread_state_names[] = { "INACTIVE",		"ACTIVE",		 "WAITING
 #define VM_STACK_SIZE (64)
 #define VM_FRAME_SIZE (16)
 // #define VM_THREAD_POOL_SIZE (2048)
-#define VM_THREAD_POOL_SIZE (256)
+#define VM_THREAD_POOL_SIZE (8192)
 
 typedef struct
 {
@@ -214,7 +218,7 @@ struct VM
     Thread *thread;
     Thread temp_thread;
     VMEvent events[VM_MAX_EVENTS_PER_FRAME];
-    size_t event_count;
+    // size_t event_count;
 	int flags;
     Variable globals[VAR_GLOB_MAX];
     Variable global_object;
@@ -249,6 +253,8 @@ struct VM
     // {
     //     int __call;
     // } string_index;
+
+    int frame;
 };
 
 // typedef struct
@@ -290,3 +296,4 @@ float vm_cast_float(VM *vm, Variable *arg);
 void vm_cast_vector(VM *vm, Variable *arg, float *outvec);
 const char *vm_cast_string(VM *vm, Variable *arg);
 Object *vm_cast_object(VM *vm, Variable *arg);
+Object *vm_allocate_object(VM *vm);

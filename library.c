@@ -1,42 +1,12 @@
 #define GSC_EXPORTS
 #ifdef GSC_EXPORTS
 
-#include "include/gsc.h"
-#include <core/ds/hash_trie.h>
-#include "vm.h"
 #include "ast.h"
 #include "compiler.h"
+#include "library.h"
 #include <setjmp.h>
 
 #define SMALL_STACK_SIZE (16)
-
-struct gsc_Context
-{
-	HashTrie files;
-	
-	gsc_CreateOptions options;
-	Allocator allocator;
-	char *heap;
-	Arena perm;
-	Arena temp;
-	// HashTrie c_functions;
-	// HashTrie c_methods;
-
-	// Variable small_stack[SMALL_STACK_SIZE];
-	int sp;
-
-	bool error;
-	char error_message[2048];
-
-	// Arena strtab_arena;
-	StringTable strtab;
-
-	VM *vm;
-
-	jmp_buf jmp_oom;
-
-	Object *default_object_proxy;
-};
 
 CompiledFile *find_or_create_compiled_file(gsc_Context *state, const char *path)
 {
@@ -168,7 +138,18 @@ static int f_waittillmatch(gsc_Context *ctx)
 	snprintf(fake_key, sizeof(fake_key), "$nt_%s", key);
 	Thread *thr = vm_thread(vm);
 	thr->state = VM_THREAD_WAITING_EVENT;
-	thr->waittill.arguments = NULL;
+
+	for(int i = 1; i < vm_argc(vm); i++)
+	{
+		Variable arg = *vm_argv(vm, i);
+		if(arg.type != VAR_REFERENCE)
+		{
+			vm_error(vm, "Expected reference for waittillmatch");
+		}
+		thr->waittill.arguments[i - 1] = arg;
+	}
+	thr->waittill.numargs = vm_argc(vm) - 1;
+
 	thr->waittill.name = vm_string_index(vm, fake_key);
 	thr->waittill.object = self;
 	if(thr->waittill.name == -1)
@@ -185,7 +166,17 @@ static int f_waittill(gsc_Context *ctx)
 	const char *key = vm_checkstring(vm, 0);
 	Thread *thr = vm_thread(vm);
 	thr->state = VM_THREAD_WAITING_EVENT;
-	thr->waittill.arguments = NULL;
+	// thr->waittill.arguments = NULL;
+	for(int i = 1; i < vm_argc(vm); i++)
+	{
+		Variable arg = *vm_argv(vm, i);
+		if(arg.type != VAR_REFERENCE)
+		{
+			vm_error(vm, "Expected reference for waittill");
+		}
+		thr->waittill.arguments[i - 1] = arg;
+	}
+	thr->waittill.numargs = vm_argc(vm) - 1;
 	thr->waittill.name = vm_string_index(vm, key);
 	thr->waittill.object = self;
 	if(thr->waittill.name == -1)
@@ -203,7 +194,7 @@ static int f_notify(gsc_Context *ctx)
 	const char *key = vm_checkstring(vm, 0);
 	Thread *thr = vm_thread(vm);
 	// vm_notify(vm, vm_dup(vm, &thr->frame->self), key, vm_argc(vm));
-	vm_notify(vm, self, key, 0);
+	vm_notify(vm, self, key, vm_argc(vm));
 	return 0;
 }
 
@@ -216,6 +207,11 @@ int gsc_add_tagged_object(gsc_Context *ctx, const char *tag)
 	o->proxy = ctx->default_object_proxy;
 	// o->userdata = NULL;
 	return vm_pushobject(ctx->vm, o);
+}
+
+void *gsc_allocate_object(gsc_Context *ctx)
+{
+	return (void*)vm_allocate_object(ctx->vm);
 }
 
 int gsc_add_object(gsc_Context *ctx)
@@ -274,6 +270,8 @@ static void create_default_object_proxy(gsc_Context *ctx)
 	ctx->default_object_proxy = vm_stack_top(ctx->vm, -1)->u.oval;
 
 	ctx->vm->globals[VAR_GLOB_LEVEL].u.oval->proxy = ctx->default_object_proxy;
+	ctx->vm->globals[VAR_GLOB_ANIM].u.oval->proxy = ctx->default_object_proxy;
+	ctx->vm->globals[VAR_GLOB_GAME].u.oval->proxy = ctx->default_object_proxy;
 
 	int methods = gsc_add_object(ctx);
 		gsc_add_function(ctx, f_waittill);
@@ -309,22 +307,22 @@ gsc_Context *gsc_create(gsc_CreateOptions options)
 	// hash_trie_init(&ctx->c_methods);
 
 	// TODO: FIXME
-	#define HEAP_SIZE (512 * 1024 * 1024)
+	// #define HEAP_SIZE (512 * 1024 * 1024)
 	// #define HEAP_SIZE (28 * 1024 * 1024)
 	// #define HEAP_SIZE (85 * 1024 * 1024)
 	// #define HEAP_SIZE (83 * 1024 * 1024)
-	ctx->heap = options.allocate_memory(options.userdata, HEAP_SIZE);
-	arena_init(&ctx->perm, ctx->heap, HEAP_SIZE);
+	ctx->heap = options.allocate_memory(options.userdata, options.main_memory_size);
+	arena_init(&ctx->perm, ctx->heap, options.main_memory_size);
 	ctx->perm.jmp_oom = &ctx->jmp_oom;
 	
-	#define TEMP_SIZE (20 * 1024 * 1024)
+	// #define TEMP_SIZE (20 * 1024 * 1024)
 
-	arena_init(&ctx->temp, new(&ctx->perm, char, TEMP_SIZE), TEMP_SIZE);
+	arena_init(&ctx->temp, new(&ctx->perm, char, options.temp_memory_size), options.temp_memory_size);
 	ctx->temp.jmp_oom = ctx->perm.jmp_oom;
 
-	#define STRTAB_SIZE (1 * 1024 * 1024)
+	// #define STRTAB_SIZE (1 * 1024 * 1024)
 	Arena strtab_arena;
-	arena_init(&strtab_arena, new(&ctx->perm, char, STRTAB_SIZE), STRTAB_SIZE);
+	arena_init(&strtab_arena, new(&ctx->perm, char, options.string_table_memory_size), options.string_table_memory_size);
 	strtab_arena.jmp_oom = ctx->perm.jmp_oom;
 
 	string_table_init(&ctx->strtab, strtab_arena);
@@ -338,11 +336,11 @@ gsc_Context *gsc_create(gsc_CreateOptions options)
 	vm->ctx = ctx;
 	vm->func_lookup = vm_func_lookup;
 
-	void register_dummy_c_functions(VM * vm);
-	register_dummy_c_functions(vm);
-
 	ctx->vm = vm;
 	create_default_object_proxy(ctx);
+
+	void register_dummy_c_functions(VM * vm);
+	register_dummy_c_functions(vm);
 	return ctx;
 }
 
@@ -416,6 +414,14 @@ void gsc_object_set_field(gsc_Context *state, int obj_index, const char *name)
 	// Variable value = vm_pop(state->vm);
 	vm_set_object_field(state->vm, obj_index, name);
 	// vm_set_object_field(state->vm, (Object *)object, name, &value);
+}
+
+const char *gsc_object_get_tag(gsc_Context *ctx, int obj_index)
+{
+	Variable *ov = vm_stack(ctx->vm, obj_index);
+	if(ov->type != VAR_OBJECT)
+		vm_error(ctx->vm, "'%s' is not an object", variable_type_names[ov->type]);
+	return ov->u.oval->tag;
 }
 
 void gsc_object_get_field(gsc_Context *state, int obj_index, const char *name)
@@ -541,20 +547,20 @@ const char *gsc_next_compile_dependency(gsc_Context *state)
 
 static void info(gsc_Context *state)
 {
-	printf("[INFO] heap %.2f/%.2f MB available\n",
-		   arena_available_mib(&state->perm),
-		   (float)(HEAP_SIZE - TEMP_SIZE - STRTAB_SIZE) / 1024.f / 1024.f);
-	printf("[INFO] temp %.2f MB\n",
-		   arena_available_mib(&state->temp));
-	printf("[INFO] strings text usage:%.2f, entry usage:%.2f / %.2f MB available\n",
-		   arena_available_mib(&state->strtab.begin),
-		   arena_available_mib(&state->strtab.end),
-		   (float)STRTAB_SIZE / 1024.f / 1024.f);
-	int thread_count(VM * vm);
-	printf("[INFO] %d threads\n", thread_count(state->vm));
+	// printf("[INFO] heap %.2f/%.2f MB available\n",
+	// 	   arena_available_mib(&state->perm),
+	// 	   (float)(HEAP_SIZE - TEMP_SIZE - STRTAB_SIZE) / 1024.f / 1024.f);
+	// printf("[INFO] temp %.2f MB\n",
+	// 	   arena_available_mib(&state->temp));
+	// printf("[INFO] strings text usage:%.2f, entry usage:%.2f / %.2f MB available\n",
+	// 	   arena_available_mib(&state->strtab.begin),
+	// 	   arena_available_mib(&state->strtab.end),
+	// 	   (float)STRTAB_SIZE / 1024.f / 1024.f);
+	// int thread_count(VM * vm);
+	// printf("[INFO] %d threads\n", thread_count(state->vm));
 }
 
-int gsc_update(gsc_Context *state, float dt)
+int gsc_update(gsc_Context *state, float dt) // TODO: FIXME mode INFINITE, TIME SLOTTED?
 // int gsc_update(gsc_Context *state, int delta_time)
 {
 	// const char **states[] = { [COMPILE_STATE_NOT_STARTED] = "not started",
@@ -584,13 +590,41 @@ int gsc_update(gsc_Context *state, float dt)
 	return GSC_YIELD;
 }
 
+static const char *intern_string(gsc_Context *ctx, const char *s)
+{
+	return gsc_string(ctx, gsc_register_string(ctx, s));
+}
+
+void gsc_object_set_debug_info(gsc_Context *ctx, void *object, const char *file, const char *function, int line)
+{
+	Object *o = (Object*)object;
+	o->debug_info.file = intern_string(ctx, file);
+	o->debug_info.function = intern_string(ctx, function);
+	o->debug_info.line = line;
+}
+
+int gsc_call_method(gsc_Context *ctx, const char *namespace, const char *function, int nargs)
+{
+	CHECK_ERROR(ctx);
+	//TODO: handle args
+	CHECK_OOM(ctx);
+	Variable self = vm_pop(ctx->vm);
+	vm_call_function_thread(ctx->vm, namespace, function, nargs, &self);
+	return GSC_OK; // TODO: FIXME
+}
+
 int gsc_call(gsc_Context *state, const char *namespace, const char *function, int nargs)
 {
 	CHECK_ERROR(state);
 	//TODO: handle args
 	CHECK_OOM(state);
-	vm_call_function_thread(state->vm, namespace, function, 0, nargs);
+	vm_call_function_thread(state->vm, namespace, function, nargs, NULL);
 	return GSC_OK; // TODO: FIXME
+}
+
+int gsc_push_object(gsc_Context *state, void *object)
+{
+	return vm_pushobject(state->vm, object);
 }
 
 void gsc_push(gsc_Context *state, void *value)
@@ -672,6 +706,14 @@ void gsc_add_string(gsc_Context *state, const char *value)
 int64_t gsc_get_int(gsc_Context *state, int index)
 {
 	return vm_checkinteger(state->vm, index);
+}
+
+void* gsc_get_ptr(gsc_Context *ctx, int index)
+{
+	Variable *v = vm_argv(ctx->vm, index);
+	if(v->type == VAR_OBJECT)
+		return v->u.oval;
+	return NULL;
 }
 
 int gsc_get_bool(gsc_Context *state, int index)

@@ -1,6 +1,7 @@
 #include "vm.h"
 #include <math.h>
 #include "include/gsc.h"
+#include "library.h"
 
 static HashTrie fake_vars;
 
@@ -85,9 +86,9 @@ static void process_escape_sequences(const char *s)
 	}
 }
 
-static int dump(VM *vm)
+static int dump(gsc_Context *ctx)
 {
-	Variable *v = vm_argv(vm,0);
+	Variable *v = vm_argv(ctx->vm, 0);
 	if(v->type != VAR_OBJECT)
 	{
 		return 0;
@@ -97,7 +98,7 @@ static int dump(VM *vm)
 	printf("[object]\n");
 	for(ObjectField *it = o->fields; it; it = it->next)
 	{
-		printf("\t'%s': %s\n", it->key, vm_stringify(vm, it->value, buf, sizeof(buf)));
+		printf("\t'%s': %s\n", it->key, vm_stringify(ctx->vm, it->value, buf, sizeof(buf)));
 	}
 	return 0;
 }
@@ -535,7 +536,7 @@ static int getchar_(VM *vm)
 void register_dummy_c_functions(VM *vm)
 {
 	hash_trie_init(&fake_vars);
-
+	gsc_register_function(vm->ctx, NULL, "dump", dump);
 	// vm_register_c_function(vm, "breakpoint", breakpoint);
 	// vm_register_c_function(vm, "getchar", getchar_);
 	// vm_register_c_function(vm, "print", print);

@@ -124,8 +124,8 @@ VariableString allocate_variable_string(VM *vm, int len) // len is including \0
 	}
 	else
 	{
-		vm_error(vm, "No malloc!");
-		// ptr = (char *)malloc(len);
+		// vm_error(vm, "No malloc!");
+		ptr = (char *)malloc(len); // TODO: FIXME
 	}
 	// memcpy(ptr, str, len);
 	return (VariableString) { .data = ptr, .length = len };
@@ -309,6 +309,7 @@ void vm_error(VM *vm, const char *fmt, ...)
 	vm_stacktrace(vm);
 	// print_globals(vm);
 	// vm_print_thread_info(vm);
+	abort();
 	if(vm->jmp)
 		longjmp(*vm->jmp, 1);
 	else
@@ -446,9 +447,8 @@ static Variable ref(VM *vm, Variable *referee)
 	return v;
 }
 
-Variable vm_create_object(VM *vm)
+Object *vm_allocate_object(VM *vm)
 {
-	Variable v = { .type = VAR_OBJECT };
 	Object *o = object_pool_allocate(&vm->pool.uo, Object);
 	if(!o)
 		vm_error(vm, "No objects left");
@@ -458,10 +458,13 @@ Variable vm_create_object(VM *vm)
 	o->field_count = 0;
 	o->proxy = NULL;
 	o->debug_info = vm->debug_info;
-	// vm_set_object_field(vm, o, "__line", &((Variable) { .type = VAR_INTEGER, .u.ival = line }));
-	// vm_set_object_field(vm, o, "__file", &((Variable) { .type = VAR_INTERNED_STRING, .u.ival = vm_string_index(vm, sf ? sf->file : "?") }));
+	return o;
+}
 
-	v.u.oval = o;
+Variable vm_create_object(VM *vm)
+{
+	Variable v = { .type = VAR_OBJECT };
+	v.u.oval = vm_allocate_object(vm);
 	return v;
 }
 
@@ -549,6 +552,7 @@ static void pop_string(VM *vm, char *str, size_t n)
 	{
 		// TODO: directly use a hash and memcmp for integer/other type of keys
 
+		case VAR_BOOLEAN:
 		case VAR_INTEGER: snprintf(str, n, "%" PRId64, top->u.ival); break;
 		case VAR_FLOAT: snprintf(str, n, "%f", top->u.fval); break;
 		case VAR_INTERNED_STRING:
@@ -666,6 +670,10 @@ static VariableType promote_type(VariableType lhs, VariableType rhs)
 	{
 		return VAR_STRING;
 	}
+	if(lhs == VAR_INTERNED_STRING || rhs == VAR_INTERNED_STRING)
+	{
+		return VAR_STRING;
+	}
 	if(lhs == VAR_VECTOR || rhs == VAR_VECTOR)
 	{
 		return VAR_VECTOR;
@@ -698,7 +706,7 @@ const char *vm_stringify(VM *vm, Variable *v, char *buf, size_t n)
 		// case VAR_ANIMATION:
 		case VAR_INTERNED_STRING:
 		case VAR_STRING: return variable_string(vm, v);
-		case VAR_OBJECT: return "[object]";
+		case VAR_OBJECT: snprintf(buf, n, "[object 0x%x]", v->u.oval); return buf;
 		case VAR_FUNCTION: return "[function]";
 		case VAR_VECTOR: snprintf(buf, n, "(%.2f, %.2f, %.2f)", fixnan(v->u.vval[0]), fixnan(v->u.vval[1]), fixnan(v->u.vval[2])); return buf;
 	}
@@ -754,6 +762,18 @@ static Variable unary(VM *vm, Variable *arg, int op)
 	Variable result = { .type = arg->type };
 	switch(arg->type)
 	{
+		case VAR_UNDEFINED:
+		{
+			if(op == '!')
+			{
+				result.type = VAR_BOOLEAN;
+				result.u.ival = 1;
+			}
+			else
+				err = true;
+		}
+		break;
+
 		case VAR_BOOLEAN:
 		{
 			if(op == '!')
@@ -1158,6 +1178,70 @@ gsc_Function object_find_callable(VM *vm, Object *object, const char *callable, 
 	return NULL;
 }
 
+static void op_load_field_object_(VM *vm, Variable obj, const char *prop)
+{
+	if(obj.type == VAR_UNDEFINED)
+	{
+		push(vm, undef);
+	}
+	else if(obj.type != VAR_OBJECT)
+	{
+		vm_error(vm, "'%s' is not an object", variable_type_names[obj.type]);
+	}
+	else
+	{
+		Object *o = object_for_var(&obj);
+		if(!o)
+		{
+			vm_error(vm, "object is null");
+		}
+		if(!strcmp(prop, "size"))
+		{
+			push(vm, integer(vm, o->field_count));
+			// Variable *v = variable(vm);
+			// v->type = VAR_INTEGER;
+			// v->u.ival = o->fields.length;
+			// push(vm, v);
+		}
+		else
+		{
+			bool handled = false;
+			if(o->proxy)
+			{
+				gsc_Function func = object_find_callable(vm, o, "__get", prop);
+				if(func)
+				{
+					push(vm, obj);
+					push(vm, integer(vm, 0));
+					vm->fsp = vm->thread->sp;
+					if(func(vm->ctx) <= 0)
+					{
+						vm_pushundefined(vm);
+						// vm_error(vm, "'%s' must return value", prop);
+					}
+					Variable result = pop(vm);
+					pop(vm);
+					pop(vm);
+					push(vm, result);
+					handled = true;
+				}
+			}
+			if(!handled)
+			{
+				ObjectField *entry = vm_object_upsert(NULL, o, prop);
+				if(!entry)
+				{
+					push(vm, undef);
+				}
+				else
+				{
+					push(vm, *entry->value);
+				}
+			}
+		}
+	}
+}
+
 static bool call_function(VM *vm, Thread*, const char *file, const char *function, int function_string_index, size_t nargs, bool, int);
 #define ASSERT_STACK(X)                                                              \
 	do                                                                               \
@@ -1341,64 +1425,7 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 			{
 				char prop[256] = { 0 };
 				pop_string(vm, prop, sizeof(prop));
-
-				if(obj.type == VAR_UNDEFINED)
-				{
-					push(vm, undef);
-				}
-				else if(obj.type != VAR_OBJECT)
-				{
-					vm_error(vm, "'%s' is not an object", variable_type_names[obj.type]);
-				}
-				else
-				{
-					Object *o = object_for_var(&obj);
-					if(!o)
-					{
-						vm_error(vm, "object is null");
-					}
-					if(!strcmp(prop, "size"))
-					{
-						push(vm, integer(vm, o->field_count));
-						// Variable *v = variable(vm);
-						// v->type = VAR_INTEGER;
-						// v->u.ival = o->fields.length;
-						// push(vm, v);
-					}
-					else
-					{
-						bool handled = false;
-						if(o->proxy)
-						{
-							gsc_Function func = object_find_callable(vm, o, "__get", prop);
-							if(func)
-							{
-								push(vm, obj);
-								push(vm, integer(vm, 0));
-								vm->fsp = vm->thread->sp;
-								if(func(vm->ctx) <= 0)
-									vm_error(vm, "Must return value");
-								Variable result = pop(vm);
-								pop(vm);
-								pop(vm);
-								push(vm, result);
-								handled = true;
-							}
-						}
-						if(!handled)
-						{
-							ObjectField *entry = vm_object_upsert(NULL, o, prop);
-							if(!entry)
-							{
-								push(vm, undef);
-							}
-							else
-							{
-								push(vm, *entry->value);
-							}
-						}
-					}
-				}
+				op_load_field_object_(vm, obj, prop);
 			}
 			ASSERT_STACK(-1);
 		}
@@ -1817,35 +1844,37 @@ ObjectField *vm_object_upsert(VM *vm, Object *o, const char *key)
 	return NULL;
 }
 
+void get_object_field(VM *vm, Variable *ov, const char *key)
+{
+	op_load_field_object_(vm, *ov, key);
+	// int idx = vm_string_index(vm, key);
+	// Object *o = object_for_var(ov);
+	// ObjectField *entry = vm_object_upsert(NULL, o, string(vm, idx));
+	// if(!entry)
+	// {
+	// 	push(vm, undef);
+	// } else
+	// {
+	// 	push(vm, *entry->value);
+	// }
+}
+
 void vm_get_object_field(VM *vm, int obj_index, const char *key)
 {
 	int idx = vm_string_index(vm, key);
 	Variable *ov = vm_stack(vm, obj_index);
 	if(ov->type != VAR_OBJECT)
 		vm_error(vm, "'%s' is not an object", variable_type_names[ov->type]);
-	Object *o = object_for_var(ov);
-	ObjectField *entry = vm_object_upsert(NULL, o, string(vm, idx));
-	if(!entry)
-	{
-		push(vm, undef);
-	} else
-	{
-		push(vm, *entry->value);
-	}
-}
-
-void get_object_field(VM *vm, Variable *ov, const char *key)
-{
-	int idx = vm_string_index(vm, key);
-	Object *o = object_for_var(ov);
-	ObjectField *entry = vm_object_upsert(NULL, o, string(vm, idx));
-	if(!entry)
-	{
-		push(vm, undef);
-	} else
-	{
-		push(vm, *entry->value);
-	}
+	// Object *o = object_for_var(ov);
+	get_object_field(vm, ov, key);
+	// ObjectField *entry = vm_object_upsert(NULL, o, string(vm, idx));
+	// if(!entry)
+	// {
+	// 	push(vm, undef);
+	// } else
+	// {
+	// 	push(vm, *entry->value);
+	// }
 }
 
 void set_object_field(VM *vm, Variable *ov, const char *key)
@@ -1874,6 +1903,11 @@ void vm_init(VM *vm, Allocator *allocator, StringTable *strtab)
 	vm->allocator = allocator;
 	vm->strings = strtab;
 	vm->random_state = time(0);
+	vm->frame = 0;
+	for(int i = 0; i < VM_MAX_EVENTS_PER_FRAME; ++i)
+	{
+		vm->events[i].frame = -1;
+	}
 	if(!uo_init(&vm->pool.uo, (1 << 16), -1, allocator))
 		vm_error(vm, "Failed to initialize union objects");
 	// variable_init(&vm->pool.variables, (1 << 19), -1, allocator);
@@ -2069,7 +2103,7 @@ uint32_t vm_random(VM *vm) // xorshift1
 void vm_cast_vector(VM *vm, Variable *arg, float *outvec)
 {
 	if(arg->type != VAR_VECTOR)
-		vm_error(vm, "Not a vector");
+		vm_error(vm, "'%s' is not a vector", variable_type_names[arg->type]);
 	memcpy(outvec, arg->u.vval, sizeof(arg->u.vval));
 }
 
@@ -2109,7 +2143,7 @@ float vm_checkfloat(VM *vm, int idx)
 
 bool vm_cast_bool(VM *vm, Variable *arg)
 {
-	if(arg->type != VAR_BOOLEAN)
+	if(arg->type != VAR_BOOLEAN && arg->type != VAR_INTEGER)
 		vm_error(vm, "Not a boolean");
 	return arg->u.ival;
 }
@@ -2230,7 +2264,7 @@ static void call_c_function(VM *vm, const char *namespace, const char *function,
 		CallbackFunction *cfunc = get_callback_function(vm, function);
 		if(!cfunc)
 		{
-			vm_error(vm, "No builtin function '%s'", function);
+			vm_error(vm, "No builtin function '%s::%s'", namespace, function);
 		}
 		vm_CFunction fun = (vm_CFunction)cfunc->callback;
 		nret = fun(cfunc->ctx);
@@ -2256,7 +2290,7 @@ static void call_c_function(VM *vm, const char *namespace, const char *function,
 		gsc_Function func = object_find_callable(vm, o, "__call", function);
 		if(!func)
 		{
-			vm_error(vm, "No builtin method '%s' for %s", function, o->proxy->tag);
+			vm_error(vm, "No builtin method '%s::%s' for %s", namespace, function, o->proxy->tag);
 		}
 		nret = func(vm->ctx);
 	}
@@ -2329,6 +2363,7 @@ const char *vm_stack_frame_variable_name(VM *vm, StackFrame *sf, int index)
 
 static bool call_function(VM *vm, Thread *thr, const char *file, const char *function, int function_string_index, size_t nargs, bool reversed, int call_flags)
 {
+	// printf("call_function(%s::%s)\n", file, function);
 	CompiledFunction *vmf = vm->func_lookup(vm->ctx, file, function);
     if(!vmf)
     {
@@ -2414,6 +2449,22 @@ static bool variable_eq(Variable *a, Variable *b)
 	return !memcmp(&a->u, &b->u, sizeof(a->u));
 }
 
+static VMEvent *get_free_event(VM *vm)
+{
+	for(int i = 0; i < VM_MAX_EVENTS_PER_FRAME; ++i)
+	{
+		if(vm->events[i].frame == -1)
+			return &vm->events[i];
+	}
+	vm_error(vm, "No free events");
+	return NULL;
+}
+
+static void free_event(VMEvent *ev)
+{
+	ev->frame = -1;
+}
+
 void vm_notify(VM *vm, Object *object, const char *key, size_t nargs)
 {
 	// TODO: args
@@ -2423,10 +2474,20 @@ void vm_notify(VM *vm, Object *object, const char *key, size_t nargs)
 	{
 		vm_error(vm, "Can't find string '%s'", key);
 	}
-	VMEvent ev = { .object = object, .name = name, .arguments = NULL };
-	if(vm->event_count >= VM_MAX_EVENTS_PER_FRAME)
-		vm_error(vm, "event_count >= VM_MAX_EVENTS_PER_FRAME");
-	vm->events[vm->event_count++] = ev;
+	printf("Notifying '%s'\n", key);
+	VMEvent *ev = get_free_event(vm);
+	ev->object = object;
+	ev->name = name;
+	for(int i = 1; i < nargs; i++)
+	{
+		ev->arguments[i - 1] = *vm_argv(vm, i);
+	}
+	ev->numargs = nargs - 1;
+	ev->frame = vm->frame;
+	// VMEvent ev = { .object = object, .name = name, .arguments = NULL };
+	// if(vm->event_count >= VM_MAX_EVENTS_PER_FRAME)
+	// 	vm_error(vm, "event_count >= VM_MAX_EVENTS_PER_FRAME");
+	// vm->events[vm->event_count++] = ev;
 	// buf_push(vm->events, ev);
 }
 
@@ -2460,9 +2521,12 @@ bool vm_run_threads(VM *vm, float dt)
 			sf = &t->frames[t->bp];
 		// printf("Processing thread %s::%s (%s)\n", sf ? sf->file : "?", sf ? sf->function : "?", vm_thread_state_names[t->state]);
 		// getchar();
-		for(size_t j = 0; j < vm->event_count; j++)
+		// for(size_t j = 0; j < vm->event_count; j++)
+		for(size_t j = 0; j < VM_MAX_EVENTS_PER_FRAME; j++)
 		{
 			VMEvent *ev = &vm->events[j];
+			if(ev->frame == -1 || ev->frame == vm->frame)
+				continue;
 			for(size_t k = 0; k < buf_size(t->endon); ++k)
 			{
 				if(ev->name == t->endon[k])
@@ -2519,11 +2583,24 @@ bool vm_run_threads(VM *vm, float dt)
 
 			case VM_THREAD_WAITING_EVENT:
 			{
-				for(size_t j = 0; j < vm->event_count; j++)
+				// for(size_t j = 0; j < vm->event_count; j++)
+				for(size_t j = 0; j < VM_MAX_EVENTS_PER_FRAME; j++)
 				{
 					VMEvent *ev = &vm->events[j];
+					if(ev->frame == -1 || ev->frame == vm->frame)
+						continue;
 					if(ev->name == t->waittill.name && ev->object == t->waittill.object)
 					{
+						int min = t->waittill.numargs;
+						if(ev->numargs < min)
+							min = ev->numargs;
+						for(int k = 0; k < min; k++)
+						{
+							Variable *dst = t->waittill.arguments[k].u.refval;
+							Variable *src = &ev->arguments[k];
+							dst->type = src->type;
+							memcpy(&dst->u, &src->u, sizeof(dst->u));
+						}
 						t->state = VM_THREAD_ACTIVE;
 						// printf("Thread %d resumed on event '%s'\n", i, string(vm, ev->name));
 					}
@@ -2535,8 +2612,16 @@ bool vm_run_threads(VM *vm, float dt)
 		if(t)
 			add_thread(vm, t);
 	}
-	
-	vm->event_count = 0; // Reset for next frame
 
+	for(size_t j = 0; j < VM_MAX_EVENTS_PER_FRAME; j++)
+	{
+		VMEvent *ev = &vm->events[j];
+		if(ev->frame == -1 || ev->frame == vm->frame)
+			continue;
+		free_event(ev);
+	}
+	
+	// vm->event_count = 0; // Reset for next frame
+	vm->frame++;
 	return vm->thread_read_idx != vm->thread_write_idx;
 }

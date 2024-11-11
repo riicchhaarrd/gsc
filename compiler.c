@@ -461,6 +461,9 @@ IMPL_VISIT(ASTLiteral)
 				if(n->value.function.file->type != AST_FILE_REFERENCE)
 					error(c, "Not a file reference");
 				instr->operands[2] = string(c, n->value.function.file->ast_file_reference_data.file);
+			} else
+			{
+				instr->operands[2] = string(c, c->path);
 			}
 			if(n->value.function.function->type != AST_IDENTIFIER)
 				error(c, "Not a function identifier");
