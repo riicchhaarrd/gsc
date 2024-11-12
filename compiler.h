@@ -1,16 +1,25 @@
 #pragma once
 
 #include "instruction.h"
-#include <core/ds/buf.h>
-#include <core/arena.h>
-#include <core/ds/list.h>
-#include <core/ds/hash_trie.h>
-#include <core/ds/hash_table.h>
+#include "buf.h"
+#include "arena.h"
+#include "hash_trie.h"
 #include "string_table.h"
 #include "ast.h"
 
 typedef struct ASTNode ASTNode;
 
+#define LIST_FOREACH(type, head, iterator) \
+    for (type* iterator = head; iterator != NULL; iterator = iterator->next)
+
+typedef struct Node Node;
+
+struct Node
+{
+    Node *next;
+    void *data;
+    // char data[];
+};
 typedef struct
 {
 	Node *continue_list;

@@ -1,15 +1,14 @@
 #pragma once
 
-#include <core/io/stream.h>
+#include "stream.h"
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <setjmp.h>
-#include <core/hash.h>
 
-// #ifndef CT_HASH
-// 	#define CT_HASH(NAME, HASH) (HASH)
-// #endif
+#ifndef CT_HASH
+	#define CT_HASH(string, hash) (hash)
+#endif
 
 #define IDENTS(X)                                \
 	X(FOR, CT_HASH(for, 0xacf38390))             \

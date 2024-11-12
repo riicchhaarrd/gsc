@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <assert.h>
-#include <core/arena.h>
+#include "arena.h"
 
 #define STRING_TABLE_ARY (2)
 

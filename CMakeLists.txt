@@ -34,12 +34,9 @@ set(SOURCES
     gsc.c
     compiler.c
     traverse.c
-    functions.c
     parse.c
     vm.c
     main.c
-    files.c
-	debug.c
     precedence.c
 )
 # add_executable(gsc ${SOURCES} platform.c)

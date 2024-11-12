@@ -17,7 +17,6 @@ skipping over the irrelevant precedence levels.
 
 // #define AST_VISITOR_IMPLEMENTATION
 #include "ast.h"
-#include <core/hash.h>
 #include "parse.h"
 
 #include <stdio.h>

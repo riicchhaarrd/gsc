@@ -1,15 +1,14 @@
 #pragma once
 
-#include <core/ds/hash_table.h>
-#include <core/ds/buf.h>
-#include <core/arena.h>
+#include "buf.h"
+#include "arena.h"
 #include <stdarg.h>
 #include <setjmp.h>
 #include "variable.h"
 #include "instruction.h"
-#include <core/allocator.h>
-#include <core/ds/hash_trie.h>
-#include <core/ds/object_pool.h>
+#include "allocator.h"
+#include "hash_trie.h"
+#include "object_pool.h"
 #include "string_table.h"
 #include "include/gsc.h"
 

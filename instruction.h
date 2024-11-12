@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include <core/ds/hash_trie.h>
+#include "hash_trie.h"
 
 #define OPCODES(X) \
 	X(PUSH)        \

@@ -28,8 +28,8 @@ static Scope *previous_scope(Compiler *c)
 	return &c->scopes[c->current_scope - 1];
 }
 
-#include <core/io/stream.h>
-#include <core/io/stream_buffer.h>
+#include "stream.h"
+#include "stream_buffer.h"
 
 static void print_source(Compiler *c, int offset, int range_min, int range_max)
 {

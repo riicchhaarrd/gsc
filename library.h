@@ -1,9 +1,9 @@
 #pragma once
-#include <core/arena.h>
+#include "arena.h"
 #include "string_table.h"
 #include "vm.h"
 #include "include/gsc.h"
-#include <core/ds/hash_trie.h>
+#include "hash_trie.h"
 
 struct gsc_Context
 {

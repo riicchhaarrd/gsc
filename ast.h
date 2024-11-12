@@ -1,8 +1,7 @@
 #pragma once
 #include <stdbool.h>
-#include <core/allocator.h>
-#include <core/ds/list.h>
-#include <core/ds/hash_trie.h>
+#include "allocator.h"
+#include "hash_trie.h"
 
 typedef struct ASTNode ASTNode;
 typedef ASTNode* ASTNodePtr;

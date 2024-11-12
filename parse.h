@@ -1,8 +1,8 @@
 #pragma once
-#include <core/io/stream_buffer.h>
+#include "stream_buffer.h"
 #include "lexer.h"
-#include <core/allocator.h>
-#include <core/arena.h>
+#include "allocator.h"
+#include "arena.h"
 
 typedef struct
 {
