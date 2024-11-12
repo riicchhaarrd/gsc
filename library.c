@@ -339,8 +339,8 @@ gsc_Context *gsc_create(gsc_CreateOptions options)
 	ctx->vm = vm;
 	create_default_object_proxy(ctx);
 
-	void register_dummy_c_functions(VM * vm);
-	register_dummy_c_functions(vm);
+	// void register_dummy_c_functions(VM * vm);
+	// register_dummy_c_functions(vm);
 	return ctx;
 }
 

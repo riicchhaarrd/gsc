@@ -10,12 +10,9 @@
 #include <unistd.h>
 #include "string_table.h"
 
-FILE *open_file(const char *path);
-
 static char *read_text_file(const char *path)
 {
-	// FILE *fp = fopen(path, "r");
-	FILE *fp = open_file(path);
+	FILE *fp = fopen(path, "r");
 	if(!fp)
 		return NULL;
 	long n = 0;

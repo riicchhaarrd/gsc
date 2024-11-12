@@ -1,6 +1,7 @@
 
 #include "ast.h"
 #include "parse.h"
+#include <assert.h>
 
 static const char *string(Parser *parser, TokenType type)
 {
