@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <assert.h>
 #include <stdbool.h>
+#include <math.h>
+#include <inttypes.h>
 
 static char *read_text_file(const char *path)
 {
@@ -106,6 +108,44 @@ static int f_openfile(gsc_Context *ctx)
 	}
 	return 0;
 }
+static const char *stringify(gsc_Context *ctx, char *buf, size_t n, int index)
+{
+#define fixnan(x) (isnan(x) ? 0.f : (x))
+	switch(gsc_get_type(ctx, index))
+	{
+		case GSC_TYPE_UNDEFINED: return "undefined";
+		case GSC_TYPE_BOOLEAN: return gsc_get_bool(ctx, index) == 0 ? "0" : "1";
+		case GSC_TYPE_FLOAT: snprintf(buf, n, "%.2f", fixnan(gsc_get_float(ctx, index))); return buf;
+		case GSC_TYPE_INTEGER: snprintf(buf, n, "%" PRId64, gsc_get_int(ctx, index)); return buf;
+		case GSC_TYPE_INTERNED_STRING:
+		case GSC_TYPE_STRING: return gsc_get_string(ctx, index);
+		case GSC_TYPE_OBJECT: snprintf(buf, n, "[object 0x%x]", gsc_get_ptr(ctx, index)); return buf;
+		case GSC_TYPE_FUNCTION: return "[function]";
+		case GSC_TYPE_VECTOR:
+		{
+			float vec[3];
+			gsc_get_vec3(ctx, index, vec);
+			snprintf(buf, n, "(%.2f, %.2f, %.2f)", fixnan(vec[0]), fixnan(vec[1]), fixnan(vec[2]));
+			return buf;
+		}
+		break;
+	}
+	return NULL;
+}
+static int f_println(gsc_Context *ctx)
+{
+	int argc = gsc_numargs(ctx);
+	char buf[1024];
+	// printf("[SCRIPT] ");
+	for(int i = 0; i < argc; ++i)
+	{
+		const char *str = stringify(ctx, buf, sizeof(buf), i);
+		process_escape_sequences(str, stdout);
+		putchar(' ');
+	}
+	putchar('\n');
+	return 0;
+}
 static int f_writefile(gsc_Context *ctx)
 {
 	int obj = gsc_get_object(ctx, 0);
@@ -128,6 +168,7 @@ static int f_closefile(gsc_Context *ctx)
 }
 
 static gsc_FunctionEntry functions[] = { { "spawn", spawn },
+										 { "println", f_println },
 										 { "openfile", f_openfile },
 										 { "closefile", f_closefile },
 										 { "writefile", f_writefile },
@@ -152,14 +193,21 @@ int main(int argc, char **argv)
 
 	heap = mem;
 	gsc_CreateOptions opts = { .allocate_memory = allocate_memory,
-								.free_memory = free_memory,
-								.read_file = read_file,
-								.userdata = NULL,
-								.main_memory_size = 128 * 1024 * 1024,
-								.string_table_memory_size = 16 * 1024 * 1024,
-								.temp_memory_size = 32 * 1024 * 1024,
-								.verbose = 0 };
+							   .free_memory = free_memory,
+							   .read_file = read_file,
+							   .userdata = NULL,
+							   .main_memory_size = 128 * 1024 * 1024,
+							   .string_table_memory_size = 16 * 1024 * 1024,
+							   .temp_memory_size = 32 * 1024 * 1024,
+							   .verbose = 0,
+							   .max_threads = 1024,
+							   .default_self = "level" };
 	gsc_Context *ctx = gsc_create(opts);
+	if(!ctx)
+	{
+		fprintf(stderr, "Failed to create context\n");
+		exit(1);
+	}
 	{
 		int level = gsc_add_tagged_object(ctx, "#level");
 		gsc_set_global(ctx, "level");
@@ -177,7 +225,7 @@ int main(int argc, char **argv)
 	}
 	for(int i = 0; functions[i].name; i++)
 		gsc_register_function(ctx, NULL, functions[i].name, functions[i].function);
-	int result = gsc_compile(ctx, input_file, GSC_COMPILE_FLAG_PRINT_EXPRESSION);
+	int result = gsc_compile(ctx, input_file, 0);
 	if(result == GSC_OK)
 	{
 		result = gsc_link(ctx);

@@ -162,7 +162,7 @@ static size_t emit4(Compiler *c, Opcode opcode, Operand operand1, Operand operan
 // Program counter
 static int ip(Compiler *c)
 {
-	return buf_size(c->instructions);
+	return c->instruction_count;
 }
 
 static size_t reljmp_(Compiler *c, Opcode opcode, int current, int destination)
@@ -996,14 +996,14 @@ static void print_instruction(Compiler *c, Instruction *instr)
 	printf("\n");
 }
 
-void dump_instructions(Compiler *c, Instruction *instructions)
-{
-	for(size_t i = 0; i < buf_size(instructions); ++i)
-	{
-		Instruction *instr = &instructions[i];
-		print_instruction(c, instr);
-	}
-}
+// void dump_instructions(Compiler *c, Instruction *instructions)
+// {
+// 	for(size_t i = 0; i < buf_size(instructions); ++i)
+// 	{
+// 		Instruction *instr = &instructions[i];
+// 		print_instruction(c, instr);
+// 	}
+// }
 IMPL_VISIT(ASTFunction)
 {
 	error(c, "Nested functions are not supported");

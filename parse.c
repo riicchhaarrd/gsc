@@ -314,7 +314,7 @@ void parse(Parser *parser, const char *path, HashTrie *functions, HashTrie *glob
 				lexer_token_read_string(parser->lexer,
 										&parser->token,
 										parser->string,
-										sizeof(parser->max_string_length));
+										parser->max_string_length);
 				advance(parser, TK_IDENTIFIER);
 				// TODO: compile here for each ASTFunction then throw away the AST to reduce temporary peak memory usage
 				if(parser->token.type == '(')

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "instruction.h"
-#include "buf.h"
 #include "arena.h"
 #include "hash_trie.h"
 #include "string_table.h"

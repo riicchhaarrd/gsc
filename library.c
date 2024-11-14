@@ -24,12 +24,12 @@ CompiledFile *find_or_create_compiled_file(gsc_Context *state, const char *path)
 	return entry->value;
 }
 
-CompiledFile *compile(gsc_Context *state, const char *path, const char *data, int flags)
+CompiledFile *compile(gsc_Context *state, const char *path, const char *data, int flags, HashTrie *globals, Arena temp)
 {
 	CompiledFile *cf = find_or_create_compiled_file(state, path);
 	if(cf->state != COMPILE_STATE_NOT_STARTED)
 		return cf;
-	int status = compile_file(path, data, cf, &state->perm, state->temp, &state->strtab, flags, &state->ast_globals);
+	int status = compile_file(path, data, cf, &state->perm, temp, &state->strtab, flags, globals);
 	cf->state = status == 0 ? COMPILE_STATE_DONE : COMPILE_STATE_FAILED;
 	if(cf->state != COMPILE_STATE_DONE)
 		return cf;
@@ -122,7 +122,10 @@ static int f_endon(gsc_Context *ctx)
 	const char *key = vm_checkstring(vm, 0);
 	Thread *thr = vm_thread(vm);
 	int idx = vm_string_index(vm, key);
-	buf_push(thr->endon, idx);
+	if(thr->endon_string_count >= VM_MAX_ENDON_STRINGS)
+		vm_error(ctx->vm, "Max endon string count (%d) reached", VM_MAX_ENDON_STRINGS);
+	thr->endon[thr->endon_string_count++] = idx;
+	// buf_push(thr->endon, idx);
 	return 0;
 }
 
@@ -295,6 +298,7 @@ gsc_Context *gsc_create(gsc_CreateOptions options)
 
 	if(setjmp(ctx->jmp_oom))
 	{
+		// printf("Out of memory\n");
 		return NULL;
 	}
 
@@ -326,7 +330,7 @@ gsc_Context *gsc_create(gsc_CreateOptions options)
 	string_table_init(&ctx->strtab, strtab_arena);
 
 	VM *vm = new(&ctx->perm, VM, 1);
-	vm_init(vm, &ctx->allocator, &ctx->strtab, options.default_self);
+	vm_init(vm, &ctx->allocator, &ctx->strtab, options.default_self, options.max_threads);
 	vm->flags = VM_FLAG_NONE;
 	if(options.verbose)
 		vm->flags |= VM_FLAG_VERBOSE;
@@ -478,33 +482,10 @@ int gsc_link(gsc_Context *state)
 			}
 		}
 	}
-
-	Compiler compiler = { 0 };
-
-	Instruction instructions[64];
-	
-	// Create global variables
-	for(HashTrieNode *it = state->ast_globals.head; it; it = it->next)
-	{
-		ASTNode *n = it->value;
-		int numinstructions = compile_node(instructions, 64, &compiler, state->temp, n, &state->jmp_oom, &state->strtab, NULL);
-		if(compiler.variable_index > 0)
-		{
-			return GSC_ERROR; // TODO: FIXME
-		}
-		for(int i = 0; i < numinstructions; i++)
-		{
-			vm_execute_instruction(state->vm, &instructions[i]);
-		}
-		// Variable result = vm_pop(state->vm);
-		// printf("result: %s\n", variable_type_names[result.type]);
-		gsc_set_global(state, it->key);
-		// printf("%d instructions\n", numinstructions);
-	}
 	return GSC_OK;
 }
 
-int gsc_compile_source(gsc_Context *state, const char *filename, const char *source, int flags)
+int gsc_compile_source(gsc_Context *state, const char *filename, const char *source, int flags, HashTrie *globals, Arena temp)
 {
 	char basename[256];
 	char *sep = strrchr(filename, '.');
@@ -513,7 +494,7 @@ int gsc_compile_source(gsc_Context *state, const char *filename, const char *sou
 		snprintf(basename, sizeof(basename), "%.*s", (int)(sep - filename), filename);
 	}
 	CHECK_OOM(state);
-	CompiledFile *cf = compile(state, sep ? basename : filename, source, flags);
+	CompiledFile *cf = compile(state, sep ? basename : filename, source, flags, globals, temp);
 	switch(cf->state)
 	{
 		case COMPILE_STATE_DONE: return GSC_OK;
@@ -540,11 +521,47 @@ int gsc_compile_source(gsc_Context *state, const char *filename, const char *sou
 
 int gsc_compile(gsc_Context *state, const char *filename, int flags)
 {
+	HashTrie ast_globals;
+	hash_trie_init(&ast_globals);
+
+	Arena temp = state->temp;
+	// TODO: FIXME
+	Object *globals = state->vm->global_object.u.oval;
+	for(ObjectField *it = globals->fields; it; it = it->next)
+	{
+		Allocator allocator = arena_allocator(&temp);
+		hash_trie_upsert(&ast_globals, it->key, &allocator, false)->value = NULL;
+	}
 	int status = GSC_OK;
 	const char *source = state->options.read_file(state->options.userdata, filename, &status);
 	if(status != GSC_OK)
 		return status;
-	return gsc_compile_source(state, filename, source, flags);
+	status = gsc_compile_source(state, filename, source, flags, &ast_globals, temp);
+	if(status != GSC_OK)
+		return status;
+	Compiler compiler = { 0 };
+	Instruction instructions[64];
+	for(HashTrieNode *it = ast_globals.head; it; it = it->next)
+	{
+		ASTNode *n = it->value;
+		if(!n)
+			continue;
+		int numinstructions = compile_node(instructions, 64, &compiler, temp, n, &state->jmp_oom, &state->strtab, &ast_globals);
+		if(compiler.variable_index > 0)
+		{
+			return GSC_ERROR; // TODO: FIXME
+		}
+		for(int i = 0; i < numinstructions; i++)
+		{
+			vm_execute_instruction(state->vm, &instructions[i]);
+		}
+		// Variable result = vm_pop(state->vm);
+		// printf("result: %s\n", variable_type_names[result.type]);
+		gsc_set_global(state, it->key);
+		// printf("%d instructions\n", numinstructions);
+	}
+
+	return status;
 }
 
 void *gsc_temp_alloc(gsc_Context *ctx, int size)

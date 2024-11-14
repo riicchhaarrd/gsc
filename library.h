@@ -31,6 +31,4 @@ struct gsc_Context
 	jmp_buf jmp_oom;
 
 	Object *default_object_proxy;
-
-	HashTrie ast_globals;
 };

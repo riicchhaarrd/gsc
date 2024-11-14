@@ -1,6 +1,5 @@
 #pragma once
 
-#include "buf.h"
 #include "arena.h"
 #include <stdarg.h>
 #include <setjmp.h>
@@ -130,12 +129,15 @@ struct Variable
 
 enum { sizeof_Variable = sizeof(Variable) };
 
+#define VM_MAX_LOCALS (256)
+
 #pragma pack(push, 8)
 typedef struct
 {
-    Variable *locals;
+    Variable *locals[VM_MAX_LOCALS]; // TODO: FIXME
     int local_count;
     Instruction *instructions;
+    int instruction_count;
     const char *file, *function;
     int ip;
     // Variable self;
@@ -170,7 +172,9 @@ static const char *vm_thread_state_names[] = { "INACTIVE",		"ACTIVE",		 "WAITING
 #define VM_STACK_SIZE (64)
 #define VM_FRAME_SIZE (16)
 // #define VM_THREAD_POOL_SIZE (2048)
-#define VM_THREAD_POOL_SIZE (8192)
+// #define VM_THREAD_POOL_SIZE (8192)
+
+#define VM_MAX_ENDON_STRINGS (8)
 
 typedef struct
 {
@@ -182,7 +186,8 @@ typedef struct
     int result;
     float wait;
     VMEvent waittill;
-    int *endon;
+    int endon[VM_MAX_ENDON_STRINGS];
+    int endon_string_count;
     struct{
 		const char *file, *function;
 	} caller;
@@ -209,7 +214,8 @@ enum { sizeof_Thread = sizeof(Thread) };
 struct VM
 {
     jmp_buf *jmp;
-    Thread *thread_buffer[VM_THREAD_POOL_SIZE];
+    int max_threads;
+    Thread **thread_buffer;//[VM_THREAD_POOL_SIZE];
     int thread_read_idx;
     int thread_write_idx;
     
@@ -266,7 +272,7 @@ struct VM
 bool vm_call_function_thread(VM *vm, const char *file, const char *function, size_t nargs, Variable *self);
 // bool vm_run(VM *vm, float dt);
 bool vm_run_threads(VM *vm, float dt);
-void vm_init(VM *vm, Allocator *allocator, StringTable *strtab, const char *default_self);
+void vm_init(VM *vm, Allocator *allocator, StringTable *strtab, const char *default_self, int max_threads);
 void vm_cleanup(VM*);
 
 void vm_register_callback_function(VM *vm, const char *name, void *callback, void *ctx);

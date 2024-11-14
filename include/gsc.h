@@ -60,6 +60,7 @@ extern "C"
 		int temp_memory_size;
 		int string_table_memory_size;
 		const char *default_self;
+		int max_threads;
 	} gsc_CreateOptions;
 
 	GSC_API gsc_Context *gsc_create(gsc_CreateOptions options);
@@ -71,7 +72,7 @@ extern "C"
 	#define GSC_COMPILE_FLAG_NONE (0)
 	#define GSC_COMPILE_FLAG_PRINT_EXPRESSION (1)
 
-	GSC_API int gsc_compile_source(gsc_Context *ctx, const char *filename, const char *source, int flags);
+	// GSC_API int gsc_compile_source(gsc_Context *ctx, const char *filename, const char *source, int flags);
 	GSC_API int gsc_compile(gsc_Context *ctx, const char *filename, int flags);
 	GSC_API const char *gsc_next_compile_dependency(gsc_Context *ctx);
 	GSC_API void *gsc_temp_alloc(gsc_Context *ctx, int size);

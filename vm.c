@@ -187,7 +187,7 @@ int thread_count(VM *vm)
 	{
 		return vm->thread_write_idx - vm->thread_read_idx;
 	}
-	return VM_THREAD_POOL_SIZE - (vm->thread_read_idx - vm->thread_write_idx);
+	return vm->max_threads - (vm->thread_read_idx - vm->thread_write_idx);
 }
 
 #pragma pack(push, 8)
@@ -204,7 +204,7 @@ int get_thread_info_(VM *vm, ThreadDebugInfo_ *info, int i)
 {
 	if(vm->thread_read_idx == vm->thread_write_idx)
 		return 0; // No threads
-	Thread *t = vm->thread_buffer[(vm->thread_read_idx + i) % VM_THREAD_POOL_SIZE];
+	Thread *t = vm->thread_buffer[(vm->thread_read_idx + i) % vm->max_threads];
 	info->frames = t->frames;
 	info->bp = t->bp;
 	info->index = i;
@@ -222,7 +222,7 @@ void vm_print_thread_info(VM *vm)
 	printf("=========================================\n");
 	for(size_t i = 0; i < n; i++)
 	{
-		Thread *t = vm->thread_buffer[(vm->thread_read_idx + i) % VM_THREAD_POOL_SIZE];
+		Thread *t = vm->thread_buffer[(vm->thread_read_idx + i) % vm->max_threads];
     	StackFrame *sf = stack_frame(vm, t);
 		printf("%d: %s %s::%s", i, vm_thread_state_names[t->state], sf->file, sf->function);
 		if(t->state == VM_THREAD_WAITING_EVENT)
@@ -320,12 +320,12 @@ static Variable *local(VM *vm, size_t index)
 {
     Thread *thr = vm->thread;
     StackFrame *sf = stack_frame(vm, thr);
-	if(index >= buf_size(sf->locals))
+	if(index >= sf->local_count)
 	{
-		vm_error(vm, "Invalid local index %d/%d", (int)index, (int)buf_size(sf->locals));
+		vm_error(vm, "Invalid local index %d/%d", (int)index, (int)sf->local_count);
 		return NULL;
 	}
-	return &sf->locals[index];
+	return sf->locals[index];
 }
 
 static void print_locals(VM *vm)
@@ -334,7 +334,7 @@ static void print_locals(VM *vm)
 	StackFrame *sf = stack_frame(vm, thr);
 	printf(" || Local variables ||\n");
 	char str[1024];
-	for(size_t i = 1; i < buf_size(sf->locals); ++i)
+	for(size_t i = 1; i < sf->local_count; ++i)
 	{
 		Variable *lv = local(vm, i);
 		if(lv->type == VAR_UNDEFINED)
@@ -1130,12 +1130,12 @@ static Variable integer(VM *vm, int64_t i)
 
 void add_thread(VM *vm, Thread *t)
 {
-	if((vm->thread_write_idx + 1) % VM_THREAD_POOL_SIZE == vm->thread_read_idx)
+	if((vm->thread_write_idx + 1) % vm->max_threads == vm->thread_read_idx)
 	{
 		vm_error(vm, "Maximum amount of threads reached");
 	}
 	vm->thread_buffer[vm->thread_write_idx] = t;
-	vm->thread_write_idx = (vm->thread_write_idx + 1) % VM_THREAD_POOL_SIZE;
+	vm->thread_write_idx = (vm->thread_write_idx + 1) % vm->max_threads;
 }
 
 Thread *remove_thread(VM *vm)
@@ -1143,7 +1143,7 @@ Thread *remove_thread(VM *vm)
 	if(vm->thread_read_idx == vm->thread_write_idx)
 		return NULL;
 	Thread *t = vm->thread_buffer[vm->thread_read_idx];
-	vm->thread_read_idx = (vm->thread_read_idx + 1) % VM_THREAD_POOL_SIZE;
+	vm->thread_read_idx = (vm->thread_read_idx + 1) % vm->max_threads;
 	return t;
 }
 
@@ -1643,7 +1643,11 @@ bool vm_execute_instruction(VM *vm, Instruction *ins)
 			if(thr->bp < 0)
 				vm_error(vm, "bp < 0");
 
-			buf_free(sf->locals);
+			// buf_free(sf->locals);
+			for(int i = 0; i < sf->local_count; i++)
+			{
+				object_pool_deallocate(&vm->pool.uo, sf->locals[i]);
+			}
 			if(--thr->bp < 0)
 			{
 				thr->state = VM_THREAD_INACTIVE;
@@ -1909,14 +1913,16 @@ void vm_set_object_field(VM *vm, int obj_index, const char *key)
 	*entry->value = pop(vm);
 }
 
-void vm_init(VM *vm, Allocator *allocator, StringTable *strtab, const char *default_self)
+void vm_init(VM *vm, Allocator *allocator, StringTable *strtab, const char *default_self, int max_threads)
 {
 	memset(vm, 0, sizeof(vm));
 	vm->thread = &vm->temp_thread;
+	vm->max_threads = max_threads;
 	vm->allocator = allocator;
 	vm->strings = strtab;
 	vm->random_state = time(0);
 	vm->frame = 0;
+	vm->thread_buffer = allocator->malloc(allocator->ctx, sizeof(Thread*) * max_threads);
 	snprintf(vm->default_self, sizeof(vm->default_self), "%s", default_self);
 	for(int i = 0; i < VM_MAX_EVENTS_PER_FRAME; ++i)
 	{
@@ -1927,9 +1933,9 @@ void vm_init(VM *vm, Allocator *allocator, StringTable *strtab, const char *defa
 	// variable_init(&vm->pool.variables, (1 << 19), -1, allocator);
 	// object_init(&vm->pool.objects, (1 << 19), -1, allocator);
 	// object_field_init(&vm->pool.object_fields, (1 << 19), -1, allocator);
-	if(!thread_init(&vm->pool.threads, VM_THREAD_POOL_SIZE, -1, allocator))
+	if(!thread_init(&vm->pool.threads, max_threads, -1, allocator))
 		vm_error(vm, "Failed to initialize threads");
-	if(!stack_frame_init(&vm->pool.stack_frames, VM_THREAD_POOL_SIZE * VM_FRAME_SIZE, -1, allocator))
+	if(!stack_frame_init(&vm->pool.stack_frames, max_threads * VM_FRAME_SIZE, -1, allocator))
 		vm_error(vm, "Failed to initialize stack frames");
 
 	size_t N = 16384;
@@ -2395,16 +2401,22 @@ static bool call_function(VM *vm, Thread *thr, const char *file, const char *fun
 	// thr->bp++;
 	StackFrame *sf = stack_frame(vm, thr);
 	// memset(sf, 0, sizeof(StackFrame));
-	sf->locals = NULL;
+	// sf->locals = NULL;
 	// sf->self.u.oval = self ? self : prev_self;
 	// sf->local_count = vmf->local_count;
 	// sf->locals = new(&vm->arena, Variable, vmf->local_count);
 	sf->local_count = vmf->local_count;
 	for(size_t i = 0; i < vmf->local_count; ++i)
 	{
-		buf_push(sf->locals, (Variable) { 0 });
-		sf->locals[i].type = VAR_UNDEFINED;
-		sf->locals[i].u.ival = 0;
+		Variable *v = object_pool_allocate(&vm->pool.uo, Variable);
+		if(!v)
+			vm_error(vm, "No variables left");
+		v->type = VAR_UNDEFINED;
+		v->u.ival = 0;
+		sf->locals[i] = v;
+		// buf_push(sf->locals, (Variable) { 0 });
+		// sf->locals[i].type = VAR_UNDEFINED;
+		// sf->locals[i].u.ival = 0;
 	}
 	pop_thread(vm, thr); //nargs
 	// + 1 for implicit self parameter
@@ -2415,12 +2427,13 @@ static bool call_function(VM *vm, Thread *thr, const char *file, const char *fun
 		if(i < vmf->parameter_count + 1)
 		{
 			size_t local_idx = reversed ? (nargs + 1) - i - 1 : i;
-			sf->locals[local_idx] = arg;
+			*sf->locals[local_idx] = arg;
 		}
 	}
 	sf->file = file;
     sf->function = function;
     sf->instructions = vmf->instructions;
+	sf->instruction_count = vmf->instruction_count;
 	sf->ip = 0;
 	// static char asm_filename[256];
 	// snprintf(asm_filename, sizeof(asm_filename), "debug/%s_%s.gscasm", file, function);
@@ -2518,9 +2531,9 @@ static void run_thread(VM *vm)
 	while(vm->thread->state == VM_THREAD_ACTIVE)
     {
 		StackFrame *sf = stack_frame(vm, vm->thread);
-		if(sf->ip >= buf_size(sf->instructions))
+		if(sf->ip >= sf->instruction_count)
 		{
-			vm_error(vm, "ip oob %d/%d", sf->ip, buf_size(sf->instructions));
+			vm_error(vm, "ip oob %d/%d", sf->ip, sf->instruction_count);
 		}
 	    Instruction *current = &sf->instructions[sf->ip++];
 		if(!vm_execute_instruction(vm, current))
@@ -2549,7 +2562,7 @@ bool vm_run_threads(VM *vm, float dt)
 			VMEvent *ev = &vm->events[j];
 			if(ev->frame == -1 || ev->frame == vm->frame)
 				continue;
-			for(size_t k = 0; k < buf_size(t->endon); ++k)
+			for(size_t k = 0; k < t->endon_string_count; ++k)
 			{
 				if(ev->name == t->endon[k])
 				{
