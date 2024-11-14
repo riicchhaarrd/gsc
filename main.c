@@ -38,7 +38,14 @@ static bool node_fn(ASTNode *n, void *ctx)
 	return false;
 }
 
-int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *perm, Arena scratch, StringTable *strtab, int flags)
+int compile_file(const char *path,
+				 const char *data,
+				 CompiledFile *cf,
+				 Arena *perm,
+				 Arena scratch,
+				 StringTable *strtab,
+				 int flags,
+				 HashTrie *globals)
 {
 	if(!data)
 		return 1;
@@ -49,8 +56,11 @@ int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *pe
 		// printf("[ERROR] Out of memory!\n");
 		return 1;
 	}
-	
+	Instruction *instructions = new(&scratch, Instruction, MAX_INSTRUCTIONS);
 	Compiler compiler = { 0 };
+	compiler.globals = globals;
+	compiler.instructions = instructions;
+	compiler.instruction_count = 0;
 	compiler.arena = &scratch;
 	compiler.strings = strtab;
 	compiler.jmp = &jmp;
@@ -95,7 +105,7 @@ int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *pe
 	hash_trie_init(&ast_functions);
 
 	lexer_step(parser.lexer, &parser.token);
-	parse(&parser, path, &ast_functions);
+	parse(&parser, path, &ast_functions, globals);
 
 	for(HashTrieNode *it = ast_functions.head; it; it = it->next)
 	{
@@ -105,13 +115,10 @@ int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *pe
 		CompiledFunction *compfunc = new(perm, CompiledFunction, 1);
 		compfunc->file = cf;
 		compfunc->parameter_count = func->parameter_count;
-		Instruction *ins = compile_function(&compiler, perm, scratch, func, &local_count, compfunc);
-		if(!ins)
-		{
-			return 1;
-		}
+		compfunc->instruction_count = compile_function(&compiler, perm, scratch, func, &local_count, compfunc);
 		compfunc->local_count = local_count;
-		compfunc->instructions = ins;
+		compfunc->instructions = new(perm, Instruction, compfunc->instruction_count);
+		memcpy(compfunc->instructions, instructions, sizeof(Instruction) * compfunc->instruction_count);
 		HashTrieNode *entry = hash_trie_upsert(&cf->functions, func->name, &perm_allocator, false);
 		entry->value = compfunc;
 		compfunc->name = entry->key;

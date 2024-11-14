@@ -59,6 +59,7 @@ extern "C"
 		int main_memory_size;
 		int temp_memory_size;
 		int string_table_memory_size;
+		const char *default_self;
 	} gsc_CreateOptions;
 
 	GSC_API gsc_Context *gsc_create(gsc_CreateOptions options);
@@ -76,7 +77,7 @@ extern "C"
 	GSC_API void *gsc_temp_alloc(gsc_Context *ctx, int size);
 	GSC_API int gsc_update(gsc_Context *ctx, float dt);
 	GSC_API int gsc_call(gsc_Context *ctx, const char *file, const char *function, int nargs);
-	GSC_API int gsc_call_method(gsc_Context *ctx, const char *namespace, const char *function, int nargs);
+	GSC_API int gsc_call_method(gsc_Context *ctx, const char *file, const char *function, int nargs);
 	GSC_API void gsc_object_set_debug_info(gsc_Context *ctx,
 										   void *object,
 										   const char *file,

@@ -29,7 +29,7 @@ CompiledFile *compile(gsc_Context *state, const char *path, const char *data, in
 	CompiledFile *cf = find_or_create_compiled_file(state, path);
 	if(cf->state != COMPILE_STATE_NOT_STARTED)
 		return cf;
-	int status = compile_file(path, data, cf, &state->perm, state->temp, &state->strtab, flags);
+	int status = compile_file(path, data, cf, &state->perm, state->temp, &state->strtab, flags, &state->ast_globals);
 	cf->state = status == 0 ? COMPILE_STATE_DONE : COMPILE_STATE_FAILED;
 	if(cf->state != COMPILE_STATE_DONE)
 		return cf;
@@ -269,9 +269,9 @@ static void create_default_object_proxy(gsc_Context *ctx)
 	int proxy = gsc_add_tagged_object(ctx, "object");
 	ctx->default_object_proxy = vm_stack_top(ctx->vm, -1)->u.oval;
 
-	ctx->vm->globals[VAR_GLOB_LEVEL].u.oval->proxy = ctx->default_object_proxy;
-	ctx->vm->globals[VAR_GLOB_ANIM].u.oval->proxy = ctx->default_object_proxy;
-	ctx->vm->globals[VAR_GLOB_GAME].u.oval->proxy = ctx->default_object_proxy;
+	// ctx->vm->globals[VAR_GLOB_LEVEL].u.oval->proxy = ctx->default_object_proxy;
+	// ctx->vm->globals[VAR_GLOB_ANIM].u.oval->proxy = ctx->default_object_proxy;
+	// ctx->vm->globals[VAR_GLOB_GAME].u.oval->proxy = ctx->default_object_proxy;
 
 	int methods = gsc_add_object(ctx);
 		gsc_add_function(ctx, f_waittill);
@@ -303,8 +303,6 @@ gsc_Context *gsc_create(gsc_CreateOptions options)
 	ctx->allocator.free = gsc_free;
 
 	hash_trie_init(&ctx->files);
-	// hash_trie_init(&ctx->c_functions);
-	// hash_trie_init(&ctx->c_methods);
 
 	// TODO: FIXME
 	// #define HEAP_SIZE (512 * 1024 * 1024)
@@ -328,7 +326,7 @@ gsc_Context *gsc_create(gsc_CreateOptions options)
 	string_table_init(&ctx->strtab, strtab_arena);
 
 	VM *vm = new(&ctx->perm, VM, 1);
-	vm_init(vm, &ctx->allocator, &ctx->strtab);
+	vm_init(vm, &ctx->allocator, &ctx->strtab, options.default_self);
 	vm->flags = VM_FLAG_NONE;
 	if(options.verbose)
 		vm->flags |= VM_FLAG_VERBOSE;
@@ -338,9 +336,6 @@ gsc_Context *gsc_create(gsc_CreateOptions options)
 
 	ctx->vm = vm;
 	create_default_object_proxy(ctx);
-
-	// void register_dummy_c_functions(VM * vm);
-	// register_dummy_c_functions(vm);
 	return ctx;
 }
 
@@ -482,6 +477,29 @@ int gsc_link(gsc_Context *state)
 				}
 			}
 		}
+	}
+
+	Compiler compiler = { 0 };
+
+	Instruction instructions[64];
+	
+	// Create global variables
+	for(HashTrieNode *it = state->ast_globals.head; it; it = it->next)
+	{
+		ASTNode *n = it->value;
+		int numinstructions = compile_node(instructions, 64, &compiler, state->temp, n, &state->jmp_oom, &state->strtab, NULL);
+		if(compiler.variable_index > 0)
+		{
+			return GSC_ERROR; // TODO: FIXME
+		}
+		for(int i = 0; i < numinstructions; i++)
+		{
+			vm_execute_instruction(state->vm, &instructions[i]);
+		}
+		// Variable result = vm_pop(state->vm);
+		// printf("result: %s\n", variable_type_names[result.type]);
+		gsc_set_global(state, it->key);
+		// printf("%d instructions\n", numinstructions);
 	}
 	return GSC_OK;
 }

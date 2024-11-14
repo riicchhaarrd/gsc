@@ -219,7 +219,7 @@ struct VM
     VMEvent events[VM_MAX_EVENTS_PER_FRAME];
     // size_t event_count;
 	int flags;
-    Variable globals[VAR_GLOB_MAX];
+    // Variable globals[VAR_GLOB_MAX];
     Variable global_object;
 	// Variable level;
     // Variable game;
@@ -254,6 +254,7 @@ struct VM
     // } string_index;
 
     int frame;
+    char default_self[64];
 };
 
 // typedef struct
@@ -265,7 +266,7 @@ struct VM
 bool vm_call_function_thread(VM *vm, const char *file, const char *function, size_t nargs, Variable *self);
 // bool vm_run(VM *vm, float dt);
 bool vm_run_threads(VM *vm, float dt);
-void vm_init(VM *vm, Allocator *allocator, StringTable *strtab);
+void vm_init(VM *vm, Allocator *allocator, StringTable *strtab, const char *default_self);
 void vm_cleanup(VM*);
 
 void vm_register_callback_function(VM *vm, const char *name, void *callback, void *ctx);
@@ -296,3 +297,4 @@ void vm_cast_vector(VM *vm, Variable *arg, float *outvec);
 const char *vm_cast_string(VM *vm, Variable *arg);
 Object *vm_cast_object(VM *vm, Variable *arg);
 Object *vm_allocate_object(VM *vm);
+bool vm_execute_instruction(VM *vm, Instruction *ins);

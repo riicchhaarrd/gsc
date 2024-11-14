@@ -28,7 +28,7 @@
 	X(UNARY)       \
 	X(VECTOR)      \
 	X(PRINT_EXPR)      \
-	X(GLOB)
+	X(GLOBAL)
  // X(SELF)
 
 typedef enum
@@ -106,7 +106,6 @@ typedef struct
 } Operand;
 
 #define MAX_OPERANDS (4)
-
 typedef struct Instruction Instruction;
 struct Instruction
 {
@@ -115,6 +114,12 @@ struct Instruction
 	Operand operands[MAX_OPERANDS];
 	int line;
 };
+
+enum
+{
+	sizeof_Instruction = sizeof(Instruction)
+};
+#define MAX_INSTRUCTIONS (1 << 17) // 80 bytes * (1 << 17) = 10MB
 
 enum
 {
@@ -137,6 +142,7 @@ typedef struct
 	const char *name;
 	CompiledFile *file;
 	Instruction *instructions;
+	int instruction_count;
 	size_t parameter_count;
 	size_t local_count;
 	char **variable_names;

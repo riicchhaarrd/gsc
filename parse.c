@@ -37,7 +37,7 @@ static ASTNode *statement(Parser *parser)
 
 		case ';':
 		{
-			advance_if(parser, ';');
+			advance(parser, ';');
 			NODE(EmptyStmt, stmt);
 			n = (ASTNode*)stmt;
 		}
@@ -71,10 +71,10 @@ static ASTNode *statement(Parser *parser)
 			advance(parser, '(');
 			if(parser->token.type != ';')
 				stmt->init = expression(parser);
-			advance_if(parser, ';');
+			advance(parser, ';');
 			if(parser->token.type != ';')
 				stmt->test = expression(parser);
-			advance_if(parser, ';');
+			advance(parser, ';');
 			if(parser->token.type != ')')
 				stmt->update = expression(parser);
 			advance(parser, ')');
@@ -93,7 +93,7 @@ static ASTNode *statement(Parser *parser)
 		// 		lexer_error(parser->lexer, "Expected call expression for thread");
 		// 	}
 		// 	n = (ASTNode*)stmt;
-		// 	advance_if(parser, ';');
+		// 	advance(parser, ';');
 		// }
 		// break;
 
@@ -102,7 +102,7 @@ static ASTNode *statement(Parser *parser)
 			NODE(BreakStmt, stmt);
 			n = (ASTNode*)stmt;
 			advance(parser, TK_BREAK);
-			advance_if(parser, ';');
+			advance(parser, ';');
 		}
 		break;
 		
@@ -112,7 +112,7 @@ static ASTNode *statement(Parser *parser)
 			n = (ASTNode*)stmt;
 			advance(parser, TK_WAIT);
 			stmt->duration = expression(parser);
-			advance_if(parser, ';');
+			advance(parser, ';');
 		}
 		break;
 
@@ -122,7 +122,7 @@ static ASTNode *statement(Parser *parser)
 			n = (ASTNode*)stmt;
 			advance(parser, TK_WAITTILLFRAMEEND);
 			stmt->duration = NULL;
-			advance_if(parser, ';');
+			advance(parser, ';');
 		}
 		break;
 
@@ -131,7 +131,7 @@ static ASTNode *statement(Parser *parser)
 			NODE(ContinueStmt, stmt);
 			n = (ASTNode*)stmt;
 			advance(parser, TK_CONTINUE);
-			advance_if(parser, ';');
+			advance(parser, ';');
 		}
 		break;
 
@@ -188,7 +188,7 @@ static ASTNode *statement(Parser *parser)
 			{
 				stmt->argument = expression(parser); // TODO: can't call a threaded call expr in return, seperate parse_expression and expression functions
 			}
-			advance_if(parser, ';');
+			advance(parser, ';');
 		}
 		break;
 
@@ -214,7 +214,7 @@ static ASTNode *statement(Parser *parser)
 			NODE(ExprStmt, stmt);
 			n = (ASTNode*)stmt;
 			stmt->expression = expression(parser);
-			advance_if(parser, ';');
+			advance(parser, ';');
 		} break;
 	}
 	return n;
@@ -260,7 +260,7 @@ static ASTNode *body(Parser *parser)
 	return statement(parser);
 }
 
-void parse(Parser *parser, const char *path, HashTrie *functions)
+void parse(Parser *parser, const char *path, HashTrie *functions, HashTrie *global_variables)
 {
 	// while(lexer_step(parser->lexer, &parser->token))
 	char type[64];
@@ -304,47 +304,69 @@ void parse(Parser *parser, const char *path, HashTrie *functions)
 				{
 					syntax_error(parser, "Invalid directive");
 				}
-				advance_if(parser, ';');
+				advance(parser, ';');
 			}
 			break;
             
 			// Global scope, function definitions
 			case TK_IDENTIFIER:
 			{
-				NODE(Function, func);
-				lexer_token_read_string(parser->lexer, &parser->token, func->name, sizeof(func->name));
+				lexer_token_read_string(parser->lexer,
+										&parser->token,
+										parser->string,
+										sizeof(parser->max_string_length));
 				advance(parser, TK_IDENTIFIER);
-				advance(parser, '(');
-				ASTNode **parms = &func->parameters;
-				func->parameter_count = 0;
-				if(parser->token.type != ')')
+				// TODO: compile here for each ASTFunction then throw away the AST to reduce temporary peak memory usage
+				if(parser->token.type == '(')
 				{
-					while(1)
+					NODE(Function, func);
+					snprintf(func->name, sizeof(func->name), "%s", parser->string);
+					// lexer_token_read_string(parser->lexer, &parser->token, func->name, sizeof(func->name));
+					advance(parser, '(');
+					ASTNode **parms = &func->parameters;
+					func->parameter_count = 0;
+					if(parser->token.type != ')')
 					{
-						NODE(Identifier, parm);
-						lexer_token_read_string(parser->lexer, &parser->token, parm->name, sizeof(parm->name));
-						*parms = (ASTNode*)parm;
-						parms = &((ASTNode*)parm)->next;
-						++func->parameter_count;
-						advance(parser, TK_IDENTIFIER);
-						if(parser->token.type != ',')
-							break;
-						advance(parser, ',');
+						while(1)
+						{
+							NODE(Identifier, parm);
+							lexer_token_read_string(parser->lexer, &parser->token, parm->name, sizeof(parm->name));
+							*parms = (ASTNode *)parm;
+							parms = &((ASTNode *)parm)->next;
+							++func->parameter_count;
+							advance(parser, TK_IDENTIFIER);
+							if(parser->token.type != ',')
+								break;
+							advance(parser, ',');
+						}
 					}
-				}
-				advance(parser, ')');
-				// lexer_step(parser->lexer, &parser->token);
-				advance(parser, '{');
-				func->body = block(parser);
-				// visit_node(&visitor, func->body);
+					advance(parser, ')');
+					// lexer_step(parser->lexer, &parser->token);
+					advance(parser, '{');
+					func->body = block(parser);
+					// visit_node(&visitor, func->body);
 
-				Allocator allocator = arena_allocator(parser->temp);
-				HashTrieNode *entry = hash_trie_upsert(functions, func->name, &allocator, false);
-				if(entry->value)
-				{
-					lexer_error(parser->lexer, "Function '%s' already defined for '%s'", func->name, path);
+					Allocator allocator = arena_allocator(parser->temp);
+					HashTrieNode *entry = hash_trie_upsert(functions, func->name, &allocator, false);
+					if(entry->value)
+					{
+						lexer_error(parser->lexer, "Function '%s' already defined for '%s'", func->name, path);
+					}
+					entry->value = func;
 				}
-				entry->value = func;
+				else
+				{
+					Allocator allocator = arena_allocator(parser->temp);
+					HashTrieNode *entry = hash_trie_upsert(global_variables, parser->string, &allocator, false);
+					if(entry->value)
+					{
+						lexer_error(parser->lexer, "Global variable '%s' already defined", parser->string);
+					}
+					advance(parser, '=');
+					ASTNode *init_expr = expression(parser);
+					entry->value = init_expr;
+					advance(parser, ';');
+				}
 			}
 			break;
 

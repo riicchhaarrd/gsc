@@ -255,14 +255,14 @@ static void print_object(VM *vm, const char *key, Variable *v, int indent)
 	}
 }
 
-static void print_globals(VM *vm)
-{
-	for(int i = 0; i < VAR_GLOB_MAX; ++i)
-	{
-		printf("global %s: %s\n", variable_globals[i], variable_type_names[vm->globals[i].type]);
-		print_object(vm, variable_globals[i], &vm->globals[i], 1);
-	}
-}
+// static void print_globals(VM *vm)
+// {
+// 	for(int i = 0; i < VAR_GLOB_MAX; ++i)
+// 	{
+// 		printf("global %s: %s\n", variable_globals[i], variable_type_names[vm->globals[i].type]);
+// 		print_object(vm, variable_globals[i], &vm->globals[i], 1);
+// 	}
+// }
 
 static void vm_stacktrace(VM *vm)
 {
@@ -358,7 +358,7 @@ void vm_debugger(VM *vm)
 	printf("========= BREAKPOINT =========\n");
 	// TODO
 	vm_stacktrace(vm);
-	print_globals(vm);
+	// print_globals(vm);
 	print_locals(vm);
 	vm_print_thread_info(vm);
 	printf("========= BREAKPOINT =========\n");
@@ -1252,7 +1252,7 @@ static bool call_function(VM *vm, Thread*, const char *file, const char *functio
 
 // To "computed goto" or not to "computed goto" portability wise...
 // GCC feature "labels as values"
-static bool execute_instruction(VM *vm, Instruction *ins)
+bool vm_execute_instruction(VM *vm, Instruction *ins)
 {
     Thread *thr = vm->thread;
 	StackFrame *sf = stack_frame(vm, thr);
@@ -1320,28 +1320,41 @@ static bool execute_instruction(VM *vm, Instruction *ins)
 		// 	ASSERT_STACK(1);
 		// }
 		// break;
-
-		case OP_GLOB:
+		
+		case OP_GLOBAL:
 		{
-			int idx = read_int(vm, ins, 0);
-			bool as_ref = read_int(vm, ins, 1) > 0;
-			if(idx < 0 || idx >= VAR_GLOB_MAX)
-				vm_error(vm, "Invalid index for global");
-			Variable *glob = &vm->globals[idx];
-
+			Variable *glob = &vm->global_object;
+			if(glob->type != VAR_OBJECT)
+				vm_error(vm, "Error! Corrupted global object");
+			bool as_ref = read_int(vm, ins, 0) > 0;
 			if(as_ref)
 				push(vm, ref(vm, glob));
 			else
 				push(vm, *glob);
-			ASSERT_STACK(1);
 		}
 		break;
 
+		// case OP_GLOB:
+		// {
+		// 	int idx = read_int(vm, ins, 0);
+		// 	bool as_ref = read_int(vm, ins, 1) > 0;
+		// 	if(idx < 0 || idx >= VAR_GLOB_MAX)
+		// 		vm_error(vm, "Invalid index for global");
+		// 	Variable *glob = &vm->globals[idx];
+
+		// 	if(as_ref)
+		// 		push(vm, ref(vm, glob));
+		// 	else
+		// 		push(vm, *glob);
+		// 	ASSERT_STACK(1);
+		// }
+		// break;
+
 		case OP_FIELD_REF:
 		{
+			Variable *obj = pop_ref(vm);
 			char prop[256] = { 0 };
 			pop_string(vm, prop, sizeof(prop));
-			Variable *obj = pop_ref(vm);
 			if(obj->type != VAR_OBJECT)
 			{
 				if(obj->type == VAR_UNDEFINED) // Coerce to object... Just make this a new object
@@ -1896,7 +1909,7 @@ void vm_set_object_field(VM *vm, int obj_index, const char *key)
 	*entry->value = pop(vm);
 }
 
-void vm_init(VM *vm, Allocator *allocator, StringTable *strtab)
+void vm_init(VM *vm, Allocator *allocator, StringTable *strtab, const char *default_self)
 {
 	memset(vm, 0, sizeof(vm));
 	vm->thread = &vm->temp_thread;
@@ -1904,6 +1917,7 @@ void vm_init(VM *vm, Allocator *allocator, StringTable *strtab)
 	vm->strings = strtab;
 	vm->random_state = time(0);
 	vm->frame = 0;
+	snprintf(vm->default_self, sizeof(vm->default_self), "%s", default_self);
 	for(int i = 0; i < VM_MAX_EVENTS_PER_FRAME; ++i)
 	{
 		vm->events[i].frame = -1;
@@ -1932,27 +1946,27 @@ void vm_init(VM *vm, Allocator *allocator, StringTable *strtab)
 	vm->global_object = vm_create_object(vm);
 	vm->global_object.u.oval->refcount = VM_REFCOUNT_NO_FREE;
 
-	for(size_t i = 0; i < VAR_GLOB_MAX; ++i)
-	{
-		vm->globals[i] = vm_create_object(vm);
-		object_for_var(&vm->globals[i])->tag = variable_globals[i];
-		object_for_var(&vm->globals[i])->refcount = VM_REFCOUNT_NO_FREE;
-	}
+	// for(size_t i = 0; i < VAR_GLOB_MAX; ++i)
+	// {
+	// 	vm->globals[i] = vm_create_object(vm);
+	// 	object_for_var(&vm->globals[i])->tag = variable_globals[i];
+	// 	object_for_var(&vm->globals[i])->refcount = VM_REFCOUNT_NO_FREE;
+	// }
 
-	{
-		int level = vm_sp(vm);
-		push(vm, vm->globals[VAR_GLOB_LEVEL]); // TODO: FIXME is actually an array
-		Variable empty = vm_create_object(vm);
-		vm_pushobject(vm, empty.u.oval);
-		vm_set_object_field(vm, level, "struct");
-	}
+	// {
+	// 	int level = vm_sp(vm);
+	// 	push(vm, vm->globals[VAR_GLOB_LEVEL]); // TODO: FIXME is actually an array
+	// 	Variable empty = vm_create_object(vm);
+	// 	vm_pushobject(vm, empty.u.oval);
+	// 	vm_set_object_field(vm, level, "struct");
+	// }
 
-	{
-		int anim = vm_sp(vm);
-		push(vm, vm->globals[VAR_GLOB_ANIM]);
-		vm_pushbool(vm, false);
-		vm_set_object_field(vm, anim, "chatInitialized");
-	}
+	// {
+	// 	int anim = vm_sp(vm);
+	// 	push(vm, vm->globals[VAR_GLOB_ANIM]);
+	// 	vm_pushbool(vm, false);
+	// 	vm_set_object_field(vm, anim, "chatInitialized");
+	// }
 
 	// size_t n = 64 * 10000 * 10000;
 	// char *buf = malloc(n); // TODO: free memory
@@ -2427,7 +2441,15 @@ bool vm_call_function_thread(VM *vm, const char *file, const char *function, siz
 	vm->thread->bp = 0;
 	vm->thread->return_value = NULL;
 	vm->thread->state = VM_THREAD_ACTIVE;
-	push_thread(vm, vm->thread, self ? *self : vm->globals[VAR_GLOB_LEVEL]);
+	// push_thread(vm, vm->thread, self ? *self : vm->globals[VAR_GLOB_LEVEL]);
+	if(self)
+	{
+		push_thread(vm, vm->thread, *self);
+	}
+	else
+	{
+		gsc_get_global(vm->ctx, vm->default_self);
+	}
 	push_thread(vm, vm->thread, integer(vm, nargs));
 	if(self && self->type != VAR_OBJECT)
 		vm_error(vm, "'%s' is not an object", variable_type_names[self->type]);
@@ -2501,7 +2523,7 @@ static void run_thread(VM *vm)
 			vm_error(vm, "ip oob %d/%d", sf->ip, buf_size(sf->instructions));
 		}
 	    Instruction *current = &sf->instructions[sf->ip++];
-		if(!execute_instruction(vm, current))
+		if(!vm_execute_instruction(vm, current))
 		{
 			break;
 		}

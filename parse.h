@@ -78,4 +78,4 @@ static void advance_if_(Parser *parser, TokenType type, const char *file, int li
 
 ASTNode *parse_expression(Parser *parser, int precedence);
 ASTNode *expression(Parser *parser);
-void parse(Parser *parser, const char *path, HashTrie *functions);
+void parse(Parser *parser, const char *path, HashTrie *functions, HashTrie *globals);

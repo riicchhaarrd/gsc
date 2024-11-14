@@ -124,9 +124,14 @@ static Operand NONE = { .type = OPERAND_TYPE_NONE };
 
 static size_t emit(Compiler *c, Opcode op)
 {
-	Instruction instr = { .opcode = op, .offset = buf_size(c->instructions), .line = c->node->line };
-	buf_push(c->instructions, instr);
-	return buf_size(c->instructions) - 1;
+	if(c->instruction_count >= c->max_instruction_count)
+		error(c, "Max instructions reached");
+	Instruction *instr = &c->instructions[c->instruction_count];
+	instr->opcode = op;
+	instr->offset = c->instruction_count;
+	instr->line = c->node->line;
+	c->instruction_count++;
+	return instr->offset;
 }
 
 static size_t emit1(Compiler *c, Opcode opcode, Operand operand1)
@@ -600,19 +605,18 @@ static int define_local_variable(Compiler *c, const char *name, bool is_parm)
 
 static void identifier(Compiler *c, ASTNode *n)
 {
-	int glob_idx = -1;
-	for(size_t i = 0; variable_globals[i]; ++i)
-	{
-		if(!strcmp(n->ast_identifier_data.name, variable_globals[i]))
-		{
-			glob_idx = i;
-			emit2(c, OP_GLOB, integer(i), integer(1));
-		}
-	}
-	if(glob_idx == -1)
+	HashTrieNode *entry = c->globals && hash_trie_upsert(c->globals, n->ast_identifier_data.name, NULL, false);
+	if(!entry)
 	{
 		int idx = define_local_variable(c, n->ast_identifier_data.name, false);
 		emit4(c, OP_REF, integer(idx), NONE, NONE, NONE);
+	}
+	else
+	{
+		// emit2(c, OP_GLOBAL, string(c, n->ast_identifier_data.name), integer(1));
+		property(c, n, '.');
+		emit1(c, OP_GLOBAL, integer(1));
+		emit(c, OP_FIELD_REF);
 	}
 }
 
@@ -633,8 +637,8 @@ static void lvalue(Compiler *c, ASTNode *n)
 		break;
 		case AST_MEMBER_EXPR:
 		{
-			lvalue(c, n->ast_member_expr_data.object);
 			property(c, n->ast_member_expr_data.prop, n->ast_member_expr_data.op);
+			lvalue(c, n->ast_member_expr_data.object);
 			emit(c, OP_FIELD_REF);
 		}
 		break;
@@ -805,25 +809,21 @@ IMPL_VISIT(ASTSelf)
 
 IMPL_VISIT(ASTIdentifier)
 {
-	int glob_idx = -1;
-	for(size_t i = 0; variable_globals[i]; ++i)
+	HashTrieNode *entry = c->globals && hash_trie_upsert(c->globals, n->name, NULL, false);
+	if(!entry)
 	{
-		if(!strcmp(n->name, variable_globals[i]))
-		{
-			glob_idx = i;
-			emit2(c, OP_GLOB, integer(i), integer(0));
-		}
-	}
-	if(glob_idx == -1)
-	{
-		HashTrieNode *entry = hash_trie_upsert(&c->variables, lowercase(c, n->name), NULL, false);
+		entry = hash_trie_upsert(&c->variables, lowercase(c, n->name), NULL, false);
 		if(!entry)
-		{
 			error(c, "No variable '%s'", n->name);
-		}
-		emit4(c, OP_LOAD, integer(*(int*)entry->value), NONE, NONE, NONE);
+		emit4(c, OP_LOAD, integer(*(int *)entry->value), NONE, NONE, NONE);
 	}
-	// emit4(c, OP_LOAD, string(c, n->name), NONE, NONE, NONE);
+	else
+	{
+		// emit2(c, OP_GLOBAL, string(c, n->name), integer(0));
+		property(c, n, '.');
+		emit1(c, OP_GLOBAL, integer(0));
+		emit(c, OP_LOAD_FIELD);
+	}
 }
 IMPL_VISIT(ASTAssignmentExpr)
 {
@@ -1002,13 +1002,42 @@ IMPL_VISIT(ASTFunction)
 	error(c, "Nested functions are not supported");
 }
 
-Instruction *compile_function(Compiler *c, Arena *perm, Arena temp, ASTFunction *n, int *local_count, CompiledFunction *cf)
+int compile_node(Instruction *instructions,
+				 int max_instruction_count,
+				 Compiler *c,
+				 Arena temp,
+				 ASTNode *n,
+				 jmp_buf *jmp,
+				 StringTable *strtab, HashTrie *globals)
+{
+	hash_trie_init(&c->variables);
+	c->globals = globals;
+	c->arena = &temp;
+	c->strings = strtab;
+	c->flags = 0;
+	c->jmp = jmp;
+	c->source = NULL;
+	c->path = NULL;
+	c->variable_index = 0;
+	c->instructions = instructions;
+	c->instruction_count = 0;
+	c->max_instruction_count = max_instruction_count;
+	c->current_scope = 0;
+	c->node = (ASTNode*)n;
+	visit(n);
+	c->arena = NULL;
+	return c->instruction_count;
+}
+
+
+int compile_function(Compiler *c, Arena *perm, Arena temp, ASTFunction *n, int *local_count, CompiledFunction *cf)
 {
 	hash_trie_init(&c->variables);
 	c->arena = &temp;
 	c->variable_index = 0;
-	c->instructions = NULL;
 	c->current_scope = 0;
+	c->instruction_count = 0;
+	c->max_instruction_count = MAX_INSTRUCTIONS;
 
 	// debug_info_node(c, (ASTNode*)n);
 	c->node = (ASTNode*)n;
@@ -1023,7 +1052,6 @@ Instruction *compile_function(Compiler *c, Arena *perm, Arena temp, ASTFunction 
 	visit(n->body);
 	emit(c, OP_UNDEF);
 	emit(c, OP_RET);
-	Instruction *instr = c->instructions;
 	*local_count = c->variable_index;
 	cf->variable_names = new(perm, char*, c->variable_index);
 	size_t idx = 0;
@@ -1034,9 +1062,8 @@ Instruction *compile_function(Compiler *c, Arena *perm, Arena temp, ASTFunction 
 		memcpy(str, it->key, len);
 		cf->variable_names[idx++] = str;
 	}
-	c->instructions = NULL;
 	c->arena = NULL;
-	return instr;
+	return c->instruction_count;
 }
 
 // #include "vm.h"

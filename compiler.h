@@ -34,9 +34,12 @@ typedef struct
 {
 	size_t variable_index;
 	HashTrie variables;
+	HashTrie *globals;
 	jmp_buf *jmp;
 
     Instruction *instructions;
+	int instruction_count;
+	int max_instruction_count;
 	Arena *arena;
 	StringTable *strings;
 	Scope scopes[COMPILER_MAX_SCOPES];
@@ -52,11 +55,27 @@ typedef struct
 } Compiler;
 
 void dump_instructions(Compiler *c, Instruction *instructions);
-Instruction *compile_function(Compiler *c,
+int compile_function(Compiler *c,
 							  Arena *perm,
 							  Arena temp,
 							  ASTFunction *n,
 							  int *local_count,
 							  CompiledFunction *);
 // int compile_file(const char *path, CompiledFile *cf, Arena *perm, Arena scratch, StringTable *strtab);
-int compile_file(const char *path, const char *data, CompiledFile *cf, Arena *perm, Arena scratch, StringTable *strtab, int flags);
+int compile_file(const char *path,
+				 const char *data,
+				 CompiledFile *cf,
+				 Arena *perm,
+				 Arena scratch,
+				 StringTable *strtab,
+				 int flags,
+				 HashTrie *globals);
+
+int compile_node(Instruction *instructions,
+				 int max_instruction_count,
+				 Compiler *c,
+				 Arena temp,
+				 ASTNode *n,
+				 jmp_buf *jmp,
+				 StringTable *strtab,
+				 HashTrie *globals);
