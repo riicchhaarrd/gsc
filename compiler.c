@@ -775,6 +775,9 @@ IMPL_VISIT(ASTUnaryExpr)
 			if(n->prefix)
 			{
 				error(c, "Unsupported prefix operator -- or ++");
+			} else
+			{
+				visit(n->argument);
 			}
 			visit(n->argument);
 			emit(c, OP_CONST_1);
@@ -789,6 +792,10 @@ IMPL_VISIT(ASTUnaryExpr)
 			
 			lvalue(c, n->argument);
 			emit(c, OP_STORE);
+			if(!n->prefix)
+			{
+				emit(c, OP_POP);
+			}
 			// visit(n->argument);
 		}
 		break;
