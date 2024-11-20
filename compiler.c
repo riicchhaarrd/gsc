@@ -605,7 +605,9 @@ static int define_local_variable(Compiler *c, const char *name, bool is_parm)
 
 static void identifier(Compiler *c, ASTNode *n)
 {
-	HashTrieNode *entry = c->globals && hash_trie_upsert(c->globals, n->ast_identifier_data.name, NULL, false);
+	HashTrieNode *entry = NULL;
+	if(c->globals)
+		entry = hash_trie_upsert(c->globals, n->ast_identifier_data.name, NULL, false);
 	if(!entry)
 	{
 		int idx = define_local_variable(c, n->ast_identifier_data.name, false);
@@ -816,7 +818,9 @@ IMPL_VISIT(ASTSelf)
 
 IMPL_VISIT(ASTIdentifier)
 {
-	HashTrieNode *entry = c->globals && hash_trie_upsert(c->globals, n->name, NULL, false);
+	HashTrieNode *entry = NULL;
+	if(c->globals)
+		entry = hash_trie_upsert(c->globals, n->name, NULL, false);
 	if(!entry)
 	{
 		entry = hash_trie_upsert(&c->variables, lowercase(c, n->name), NULL, false);
