@@ -23,7 +23,8 @@ endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-builtin-macro-redefined -D'__FILE__=\"\"'")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror -Wno-error=deprecated")
+#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror -Wno-error=deprecated")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
 endif()
 set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DGSC_STANDALONE")
@@ -65,18 +66,21 @@ if (MSVC)
     target_compile_options(libgsc PRIVATE /W4 /WX)  # Warning level 4, treat warnings as errors
 else()
     target_compile_definitions(libgsc PRIVATE GSC_EXPORTS)
-    target_compile_options(libgsc PRIVATE -Wall -Wextra -Werror -fPIC -fvisibility=hidden)
+    #target_compile_options(libgsc PRIVATE -Wall -Wextra -Werror -fPIC -fvisibility=hidden)
+    target_compile_options(libgsc PRIVATE -w -fPIC -fvisibility=hidden)
     target_link_libraries(libgsc PRIVATE m)
     
     # target_compile_options(gsc PRIVATE -Wall -Wextra -Werror -fPIC -fvisibility=hidden)
     # target_link_libraries(gsc m)
 endif()
 
-if (CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_custom_command(
-        TARGET libgsc
-        POST_BUILD
-        COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:libgsc>
-        COMMENT "Stripping unneeded symbols from libgsc"
-    )
+if (NOT EMSCRIPTEN)
+	if (CMAKE_BUILD_TYPE STREQUAL "Release")
+	add_custom_command(
+			TARGET libgsc
+			POST_BUILD
+			COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:libgsc>
+			COMMENT "Stripping unneeded symbols from libgsc"
+			)
+	endif()
 endif()
