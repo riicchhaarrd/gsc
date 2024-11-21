@@ -44,5 +44,5 @@ struct ASTVisitor
 	void (*visit_fallback)(ASTVisitor *, ASTNode *, const char *type);
 };
 
-#define visit_node(v, n) visit_node_(v, n, FILE_BASENAME, __LINE__, #n)
+#define visit_node(v, n) visit_node_(v, n, __FILE__, __LINE__, #n)
 void visit_node_(ASTVisitor *v, ASTNode *n, const char *file, int line, const char *extra);

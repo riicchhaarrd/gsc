@@ -44,7 +44,7 @@ static void dump_token(Lexer *lexer, Token *t)
 	lexer_token_read_string(lexer, t, str, sizeof(str));
 	printf("Token: %s '%s'\n", token_type_to_string(t->type, type, sizeof(type)), str);
 }
-#define advance(parser, type) advance_(parser, type, FILE_BASENAME, __LINE__)
+#define advance(parser, type) advance_(parser, type, __FILE__, __LINE__)
 static void advance_(Parser *parser, TokenType type, const char *file, int line)
 {
 	if(parser->token.type == type)

@@ -32,7 +32,6 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DGSC_STANDALONE")
 include_directories(../../../include)
 set(SOURCES
     visitor.c
-    gsc.c
     compiler.c
     traverse.c
     parse.c
@@ -40,15 +39,10 @@ set(SOURCES
     main.c
     precedence.c
 )
-# add_executable(gsc ${SOURCES} platform.c)
 add_library(libgsc STATIC ${SOURCES} library.c)
 target_include_directories(libgsc PRIVATE include)
 target_compile_definitions(libgsc PRIVATE BUILD_LIB)
 set_property(TARGET libgsc PROPERTY OUTPUT_NAME gsc)
-
-include(basename.cmake)
-# define_file_basename_for_sources(gsc)
-define_file_basename_for_sources(libgsc)
 
 set_target_properties(libgsc PROPERTIES
     VERSION ${PROJECT_VERSION}
