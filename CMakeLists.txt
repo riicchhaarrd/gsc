@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(gsc VERSION 1.0 LANGUAGES C)
+project(gsc VERSION 0.1 LANGUAGES C)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
@@ -26,8 +26,8 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-builtin-macro-redefined -D'__FILE__=\"\
 #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror -Wno-error=deprecated")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
 endif()
-set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DGSC_STANDALONE")
+#set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
+#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DGSC_STANDALONE")
 
 include_directories(../../../include)
 set(SOURCES
@@ -39,7 +39,7 @@ set(SOURCES
     main.c
     precedence.c
 )
-add_library(libgsc STATIC ${SOURCES} library.c)
+add_library(libgsc SHARED ${SOURCES} library.c)
 target_include_directories(libgsc PRIVATE include)
 target_compile_definitions(libgsc PRIVATE BUILD_LIB)
 set_property(TARGET libgsc PROPERTY OUTPUT_NAME gsc)
@@ -66,6 +66,12 @@ else()
     
     # target_compile_options(gsc PRIVATE -Wall -Wextra -Werror -fPIC -fvisibility=hidden)
     # target_link_libraries(gsc m)
+endif()
+
+add_executable(gsc examples/gsc.c)
+target_link_libraries(gsc PRIVATE libgsc)
+if (NOT MSVC)
+	target_link_libraries(gsc PRIVATE m)
 endif()
 
 if (NOT EMSCRIPTEN AND NOT MSVC)

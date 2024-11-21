@@ -1,6 +1,11 @@
 #define GSC_EXPORTS
 #ifdef GSC_EXPORTS
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 #include "ast.h"
 #include "compiler.h"
 #include "library.h"
@@ -201,7 +206,7 @@ static int f_notify(gsc_Context *ctx)
 	return 0;
 }
 
-int gsc_add_tagged_object(gsc_Context *ctx, const char *tag)
+GSC_API int gsc_add_tagged_object(gsc_Context *ctx, const char *tag)
 {
 	Variable v = vm_create_object(ctx->vm);
 	Object *o = v.u.oval;
@@ -212,17 +217,17 @@ int gsc_add_tagged_object(gsc_Context *ctx, const char *tag)
 	return vm_pushobject(ctx->vm, o);
 }
 
-void *gsc_allocate_object(gsc_Context *ctx)
+GSC_API void *gsc_allocate_object(gsc_Context *ctx)
 {
 	return (void*)vm_allocate_object(ctx->vm);
 }
 
-int gsc_add_object(gsc_Context *ctx)
+GSC_API int gsc_add_object(gsc_Context *ctx)
 {
 	return gsc_add_tagged_object(ctx, NULL);
 }
 
-void gsc_object_set_proxy(gsc_Context *ctx, int obj_index, int proxy_index)
+GSC_API void gsc_object_set_proxy(gsc_Context *ctx, int obj_index, int proxy_index)
 {
 	Variable *ov = vm_stack(ctx->vm, obj_index);
 	if(ov->type != VAR_OBJECT)
@@ -232,7 +237,7 @@ void gsc_object_set_proxy(gsc_Context *ctx, int obj_index, int proxy_index)
 	o->proxy = pv->u.oval;
 }
 
-int gsc_object_get_proxy(gsc_Context *ctx, int obj_index)
+GSC_API int gsc_object_get_proxy(gsc_Context *ctx, int obj_index)
 {
 	Variable *ov = vm_stack(ctx->vm, obj_index);
 	if(ov->type != VAR_OBJECT)
@@ -255,12 +260,12 @@ int gsc_object_get_proxy(gsc_Context *ctx, int obj_index)
 // 	vm_pushobject(ctx->vm, o);
 // }
 
-const char *gsc_string(gsc_Context *ctx, int index)
+GSC_API const char *gsc_string(gsc_Context *ctx, int index)
 {
 	return string_table_get(ctx->vm->strings, index);
 }
 
-int gsc_register_string(gsc_Context *ctx, const char *s)
+GSC_API int gsc_register_string(gsc_Context *ctx, const char *s)
 {
 	return vm_string_index(ctx->vm, s);
 }
@@ -290,7 +295,7 @@ static void create_default_object_proxy(gsc_Context *ctx)
 	gsc_set_global(ctx, "object");
 }
 
-gsc_Context *gsc_create(gsc_CreateOptions options)
+GSC_API gsc_Context *gsc_create(gsc_CreateOptions options)
 {
 	gsc_Context *ctx = options.allocate_memory(options.userdata, sizeof(gsc_Context));
 	memset(ctx, 0, sizeof(gsc_Context));
@@ -343,7 +348,7 @@ gsc_Context *gsc_create(gsc_CreateOptions options)
 	return ctx;
 }
 
-void gsc_destroy(gsc_Context *state)
+GSC_API void gsc_destroy(gsc_Context *state)
 {
 	if(state)
 	{
@@ -356,12 +361,12 @@ void gsc_destroy(gsc_Context *state)
 	}
 }
 
-void gsc_register_function(gsc_Context *state, const char *namespace, const char *name, gsc_Function callback)
+GSC_API void gsc_register_function(gsc_Context *state, const char *namespace, const char *name, gsc_Function callback)
 {
 	vm_register_callback_function(state->vm, name, (void*)callback, state);
 }
 
-void *gsc_object_get_userdata(gsc_Context *ctx, int obj_index)
+GSC_API void *gsc_object_get_userdata(gsc_Context *ctx, int obj_index)
 {
 	Variable *ov = vm_stack(ctx->vm, obj_index);
 	if(ov->type != VAR_OBJECT)
@@ -370,7 +375,7 @@ void *gsc_object_get_userdata(gsc_Context *ctx, int obj_index)
 	return o->userdata;
 }
 
-void gsc_object_set_userdata(gsc_Context *ctx, int obj_index, void *userdata)
+GSC_API void gsc_object_set_userdata(gsc_Context *ctx, int obj_index, void *userdata)
 {
 	Variable *ov = vm_stack(ctx->vm, obj_index);
 	if(ov->type != VAR_OBJECT)
@@ -408,14 +413,14 @@ void gsc_object_set_userdata(gsc_Context *ctx, int obj_index, void *userdata)
 //     object->userdata = userdata;
 // }
 
-void gsc_object_set_field(gsc_Context *state, int obj_index, const char *name)
+GSC_API void gsc_object_set_field(gsc_Context *state, int obj_index, const char *name)
 {
 	// Variable value = vm_pop(state->vm);
 	vm_set_object_field(state->vm, obj_index, name);
 	// vm_set_object_field(state->vm, (Object *)object, name, &value);
 }
 
-const char *gsc_object_get_tag(gsc_Context *ctx, int obj_index)
+GSC_API const char *gsc_object_get_tag(gsc_Context *ctx, int obj_index)
 {
 	Variable *ov = vm_stack(ctx->vm, obj_index);
 	if(ov->type != VAR_OBJECT)
@@ -423,12 +428,12 @@ const char *gsc_object_get_tag(gsc_Context *ctx, int obj_index)
 	return ov->u.oval->tag;
 }
 
-void gsc_object_get_field(gsc_Context *state, int obj_index, const char *name)
+GSC_API void gsc_object_get_field(gsc_Context *state, int obj_index, const char *name)
 {
 	vm_get_object_field(state->vm, obj_index, name);
 }
 
-void gsc_set_global(gsc_Context *ctx, const char *name)
+GSC_API void gsc_set_global(gsc_Context *ctx, const char *name)
 {
 	void set_object_field(VM *vm, Variable *ov, const char *key);
 	set_object_field(ctx->vm, &ctx->vm->global_object, name);
@@ -436,7 +441,7 @@ void gsc_set_global(gsc_Context *ctx, const char *name)
 	// *entry->value = vm_pop(ctx->vm);
 }
 
-int gsc_get_global(gsc_Context *ctx, const char *name)
+GSC_API int gsc_get_global(gsc_Context *ctx, const char *name)
 {
 	void get_object_field(VM *vm, Variable *ov, const char *key);
 	get_object_field(ctx->vm, &ctx->vm->global_object, name);
@@ -451,7 +456,7 @@ int gsc_get_global(gsc_Context *ctx, const char *name)
 	return gsc_top(ctx) - 1;
 }
 
-int gsc_link(gsc_Context *state)
+GSC_API int gsc_link(gsc_Context *state)
 {
 	CHECK_OOM(state);
 	Allocator perm_allocator = arena_allocator(&state->perm);
@@ -519,7 +524,7 @@ int gsc_compile_source(gsc_Context *state, const char *filename, const char *sou
 	return GSC_OK;
 }
 
-int gsc_compile(gsc_Context *state, const char *filename, int flags)
+GSC_API int gsc_compile(gsc_Context *state, const char *filename, int flags)
 {
 	HashTrie ast_globals;
 	hash_trie_init(&ast_globals);
@@ -564,12 +569,12 @@ int gsc_compile(gsc_Context *state, const char *filename, int flags)
 	return status;
 }
 
-void *gsc_temp_alloc(gsc_Context *ctx, int size)
+GSC_API void *gsc_temp_alloc(gsc_Context *ctx, int size)
 {
 	return new(&ctx->vm->c_function_arena, char, size);
 }
 
-const char *gsc_next_compile_dependency(gsc_Context *state)
+GSC_API const char *gsc_next_compile_dependency(gsc_Context *state)
 {
 	for(HashTrieNode *it = state->files.head; it; it = it->next)
 	{
@@ -595,7 +600,7 @@ static void info(gsc_Context *state)
 	// printf("[INFO] %d threads\n", thread_count(state->vm));
 }
 
-int gsc_update(gsc_Context *state, float dt) // TODO: FIXME mode INFINITE, TIME SLOTTED?
+GSC_API int gsc_update(gsc_Context *state, float dt) // TODO: FIXME mode INFINITE, TIME SLOTTED?
 // int gsc_update(gsc_Context *state, int delta_time)
 {
 	// const char **states[] = { [COMPILE_STATE_NOT_STARTED] = "not started",
@@ -630,7 +635,7 @@ static const char *intern_string(gsc_Context *ctx, const char *s)
 	return gsc_string(ctx, gsc_register_string(ctx, s));
 }
 
-void gsc_object_set_debug_info(gsc_Context *ctx, void *object, const char *file, const char *function, int line)
+GSC_API void gsc_object_set_debug_info(gsc_Context *ctx, void *object, const char *file, const char *function, int line)
 {
 	Object *o = (Object*)object;
 	o->debug_info.file = intern_string(ctx, file);
@@ -638,7 +643,7 @@ void gsc_object_set_debug_info(gsc_Context *ctx, void *object, const char *file,
 	o->debug_info.line = line;
 }
 
-int gsc_call_method(gsc_Context *ctx, const char *namespace, const char *function, int nargs)
+GSC_API int gsc_call_method(gsc_Context *ctx, const char *namespace, const char *function, int nargs)
 {
 	CHECK_ERROR(ctx);
 	//TODO: handle args
@@ -648,7 +653,7 @@ int gsc_call_method(gsc_Context *ctx, const char *namespace, const char *functio
 	return GSC_OK; // TODO: FIXME
 }
 
-int gsc_call(gsc_Context *state, const char *namespace, const char *function, int nargs)
+GSC_API int gsc_call(gsc_Context *state, const char *namespace, const char *function, int nargs)
 {
 	CHECK_ERROR(state);
 	//TODO: handle args
@@ -657,12 +662,12 @@ int gsc_call(gsc_Context *state, const char *namespace, const char *function, in
 	return GSC_OK; // TODO: FIXME
 }
 
-int gsc_push_object(gsc_Context *state, void *object)
+GSC_API int gsc_push_object(gsc_Context *state, void *object)
 {
 	return vm_pushobject(state->vm, object);
 }
 
-void gsc_push(gsc_Context *state, void *value)
+GSC_API void gsc_push(gsc_Context *state, void *value)
 {
 	vm_pushvar(state->vm, value);
 	// if(state->sp >= SMALL_STACK_SIZE)
@@ -673,12 +678,12 @@ void gsc_push(gsc_Context *state, void *value)
 	// state->small_stack[state->sp++] = *(Variable*)value;
 }
 
-int gsc_top(gsc_Context *ctx)
+GSC_API int gsc_top(gsc_Context *ctx)
 {
 	return ctx->vm->thread->sp;
 }
 
-void gsc_error(gsc_Context *ctx, const char *fmt, ...)
+GSC_API void gsc_error(gsc_Context *ctx, const char *fmt, ...)
 {
 	char message[2048];
 	va_list va;
@@ -688,33 +693,33 @@ void gsc_error(gsc_Context *ctx, const char *fmt, ...)
 	vm_error(ctx->vm, "%s", message);
 }
 
-int gsc_type(gsc_Context *ctx, int index)
+GSC_API int gsc_type(gsc_Context *ctx, int index)
 {
 	return vm_stack_top(ctx->vm, index)->type;
 }
 
-int gsc_get_type(gsc_Context *ctx, int index)
+GSC_API int gsc_get_type(gsc_Context *ctx, int index)
 {
 	return vm_argv(ctx->vm, index)->type;
 }
 
-void gsc_pop(gsc_Context *state, int count)
+GSC_API void gsc_pop(gsc_Context *state, int count)
 {
 	for(int i = 0; i < count; ++i)
 		vm_pop(state->vm);
 }
 
-void gsc_add_int(gsc_Context *state, int value)
+GSC_API void gsc_add_int(gsc_Context *state, int value)
 {
 	vm_pushinteger(state->vm, value);
 
 }
-void gsc_add_vec3(gsc_Context *ctx, /*const*/ float *value)
+GSC_API void gsc_add_vec3(gsc_Context *ctx, /*const*/ float *value)
 {
 	vm_pushvector(ctx->vm, value);
 }
 
-void gsc_add_function(gsc_Context *ctx, gsc_Function value)
+GSC_API void gsc_add_function(gsc_Context *ctx, gsc_Function value)
 {
 	Variable v;
 	v.type = VAR_FUNCTION;
@@ -723,27 +728,27 @@ void gsc_add_function(gsc_Context *ctx, gsc_Function value)
 	vm_pushvar(ctx->vm, &v);
 }
 
-void gsc_add_bool(gsc_Context *ctx, int cond)
+GSC_API void gsc_add_bool(gsc_Context *ctx, int cond)
 {
 	vm_pushbool(ctx->vm, cond);
 }
 
-void gsc_add_float(gsc_Context *state, float value)
+GSC_API void gsc_add_float(gsc_Context *state, float value)
 {
 	vm_pushfloat(state->vm, value);
 }
 
-void gsc_add_string(gsc_Context *state, const char *value)
+GSC_API void gsc_add_string(gsc_Context *state, const char *value)
 {
 	vm_pushstring(state->vm, value);
 }
 
-int64_t gsc_get_int(gsc_Context *state, int index)
+GSC_API int64_t gsc_get_int(gsc_Context *state, int index)
 {
 	return vm_checkinteger(state->vm, index);
 }
 
-void* gsc_get_ptr(gsc_Context *ctx, int index)
+GSC_API void* gsc_get_ptr(gsc_Context *ctx, int index)
 {
 	Variable *v = vm_argv(ctx->vm, index);
 	if(v->type == VAR_OBJECT)
@@ -751,53 +756,53 @@ void* gsc_get_ptr(gsc_Context *ctx, int index)
 	return NULL;
 }
 
-int gsc_get_bool(gsc_Context *state, int index)
+GSC_API int gsc_get_bool(gsc_Context *state, int index)
 {
 	return vm_checkbool(state->vm, index);
 }
 
-void gsc_get_vec3(gsc_Context *ctx, int index, float *v)
+GSC_API void gsc_get_vec3(gsc_Context *ctx, int index, float *v)
 {
 	vm_checkvector(ctx->vm, index, v);
 }
 
-int gsc_get_object(gsc_Context *state, int index)
+GSC_API int gsc_get_object(gsc_Context *state, int index)
 {
 	return vm_checkobject(state->vm, index);
 }
 
-int gsc_arg(gsc_Context *ctx, int index)
+GSC_API int gsc_arg(gsc_Context *ctx, int index)
 {
 	return ctx->vm->fsp - 3 - index;	
 }
 
-int gsc_numargs(gsc_Context *ctx)
+GSC_API int gsc_numargs(gsc_Context *ctx)
 {
 	return ctx->vm->nargs;
 }
 
-float gsc_get_float(gsc_Context *state, int index)
+GSC_API float gsc_get_float(gsc_Context *state, int index)
 {
 	return vm_checkfloat(state->vm, index);
 }
 
-int gsc_to_int(gsc_Context *ctx, int index)
+GSC_API int gsc_to_int(gsc_Context *ctx, int index)
 {
 	return vm_cast_int(ctx->vm, vm_stack_top(ctx->vm, index));
 }
 
-float gsc_to_float(gsc_Context *ctx, int index)
+GSC_API float gsc_to_float(gsc_Context *ctx, int index)
 {
 	return vm_cast_float(ctx->vm, vm_stack_top(ctx->vm, index));
 }
 
-const char *gsc_to_string(gsc_Context *ctx, int index)
+GSC_API const char *gsc_to_string(gsc_Context *ctx, int index)
 {
 	return vm_cast_string(ctx->vm, vm_stack_top(ctx->vm, index));
 }
 
 // Only valid in callback of functions added with gsc_register_function
-const char *gsc_get_string(gsc_Context *state, int index)
+GSC_API const char *gsc_get_string(gsc_Context *state, int index)
 {
 	return vm_checkstring(state->vm, index);
 }
@@ -811,4 +816,7 @@ GSC_API void *gsc_get_internal_pointer(gsc_Context *state, const char *tag)
 	return NULL;
 }
 
+#endif
+#ifdef __cplusplus
+}
 #endif

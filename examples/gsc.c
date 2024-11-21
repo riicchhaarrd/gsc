@@ -3,7 +3,12 @@
 #include <stdlib.h>
 #include <gsc.h>
 #include <malloc.h>
-#include <unistd.h>
+#ifndef _WIN32
+	#include <unistd.h>
+#else
+	#define WIN32_LEAN_AND_MEAN
+	#include <Windows.h>
+#endif
 #include <assert.h>
 #include <stdbool.h>
 #include <math.h>
@@ -232,7 +237,11 @@ int main(int argc, char **argv)
 		gsc_call(ctx, input_file, "main", 0);
 		while(!interrupted && GSC_OK != gsc_update(ctx, 1.f / 20.f))
 		{
-			usleep(20000);
+			#ifdef _WIN32
+				Sleep(20);
+			#else
+				usleep(20000);
+			#endif
 		}
 		interrupted = false;
 		gsc_destroy(ctx);
