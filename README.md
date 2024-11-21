@@ -80,7 +80,7 @@ main()
 */
 	e = {};
 	e.position = (1, 2, 3); // vec3 variable type
-	e.position += (0,0, 10);
+	e.position += (0, 0, 10);
 	e.position *= 5;
 	e.name = "Test Entity";
 	e.health = 100;
