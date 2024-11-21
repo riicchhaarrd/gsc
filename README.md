@@ -53,35 +53,35 @@ callback()
 
 main()
 {
-  /*
-	  // You could also create objects internally with the API
+/*
+	// You could also create objects internally with the API
 
-    // Initialization
-    static int f_sethealth(gsc_Context *ctx)
-    {
-    	int obj = gsc_get_object(ctx, -1);
-    	YourInternalClass *e = reinterpret_cast<YourInternalClass*>(gsc_object_get_userdata(ctx, obj));
-      e->health = gsc_get_int(ctx, 0);
-    	return 0;
-    }
+	// Initialization
+	static int f_sethealth(gsc_Context *ctx)
+	{
+		int obj = gsc_get_object(ctx, -1);
+		YourInternalClass *e = reinterpret_cast<YourInternalClass*>(gsc_object_get_userdata(ctx, obj));
+		e->health = gsc_get_int(ctx, 0);
+		return 0;
+	}
 
-		int proxy = gsc_add_tagged_object(ctx, "Entity"); // Descriptive name which will show in debug contexts
-		int methods = gsc_add_object(ctx);
-		gsc_add_function(ctx, f_sethealth);
-		gsc_object_set_field(ctx, methods, "sethealth");
-		gsc_object_set_field(ctx, proxy, "__call"); // For field getter/setter use __set and __get
-		gsc_set_global(ctx, "#entity");
+	int proxy = gsc_add_tagged_object(ctx, "Entity"); // Descriptive name which will show in debug contexts
+	int methods = gsc_add_object(ctx);
+	gsc_add_function(ctx, f_sethealth);
+	gsc_object_set_field(ctx, methods, "sethealth");
+	gsc_object_set_field(ctx, proxy, "__call"); // For field getter/setter use __set and __get
+	gsc_set_global(ctx, "#entity");
 
-    // Object creation
-  	int ent = gsc_add_object(ctx);
-  	int proxy = gsc_get_global(ctx, "#entity");
-  	gsc_object_set_proxy(ctx, ent, proxy);
-  	gsc_pop(ctx, 1);
-  */
+	// Object creation
+	int ent = gsc_add_object(ctx);
+	int proxy = gsc_get_global(ctx, "#entity");
+	gsc_object_set_proxy(ctx, ent, proxy);
+	gsc_pop(ctx, 1);
+*/
 	e = {};
-  e.position = (1, 2, 3); // vec3 variable type
-  e.position += (0,0, 10);
-  e.position *= 5;
+	e.position = (1, 2, 3); // vec3 variable type
+	e.position += (0,0, 10);
+	e.position *= 5;
 	e.name = "Test Entity";
 	e.health = 100;
 	e.callbacks = {};
