@@ -1,0 +1,115 @@
+name: Release workflow
+
+on:
+  push:
+    branches: [ "master" ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        build_type: [Release]
+        c_compiler: [gcc, clang, cl]
+        include:
+          - os: windows-latest
+            c_compiler: cl
+            cpp_compiler: cl
+          - os: ubuntu-latest
+            c_compiler: gcc
+            cpp_compiler: g++
+        exclude:
+          - os: windows-latest
+            c_compiler: gcc
+          - os: windows-latest
+            c_compiler: clang
+          - os: ubuntu-latest
+            c_compiler: cl
+          - os: ubuntu-latest
+            c_compiler: clang
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set reusable strings
+      id: strings
+      shell: bash
+      run: |
+        echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+
+    - name: Configure CMake
+      run: >
+        cmake -B ${{ steps.strings.outputs.build-output-dir }}
+        -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+        -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        -S ${{ github.workspace }}
+
+    - name: Build
+      run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
+
+    - name: Include header file
+      run: |
+        cp ${{ github.workspace }}/include/gsc.h ${{ steps.strings.outputs.build-output-dir }}
+      
+    - name: Test
+      working-directory: ${{ steps.strings.outputs.build-output-dir }}
+      run: ctest --build-config ${{ matrix.build_type }}
+
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-${{ matrix.os }}-${{ matrix.c_compiler }}
+        path: ${{ steps.strings.outputs.build-output-dir }}
+
+  collect-artifacts:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Download All Build Artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: ./artifacts
+        
+    - name: Collect Target Files
+      run: |
+        mkdir -p release/include
+        # Collect library files (.lib, .a)
+        find ./artifacts -type f \( -name "*.lib" -o -name "*.a" \) -exec cp {} release/ \;
+        # Collect header files
+        cp ./artifacts/build-ubuntu-latest-gcc/gsc.h release/include/
+
+    - name: Archive Build Artifacts
+      run: |
+        zip -rj release-${{ github.ref_name }}.zip ./release
+        echo "artifact_path=release-${{ github.ref_name }}.zip" >> $GITHUB_ENV
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name }}
+        release_name: Release ${{ github.ref_name }}
+        draft: true
+        prerelease: false
+        body: |
+          Automated release for version ${{ github.ref_name }}
+
+    - name: Upload Combined Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ${{ env.artifact_path }}
+        asset_name: ${{ github.ref_name }}.zip
+        asset_content_type: application/zip
