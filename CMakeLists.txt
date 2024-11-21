@@ -74,7 +74,7 @@ else()
     # target_link_libraries(gsc m)
 endif()
 
-if (NOT EMSCRIPTEN)
+if (NOT EMSCRIPTEN AND NOT MSVC)
 	if (CMAKE_BUILD_TYPE STREQUAL "Release")
 	add_custom_command(
 			TARGET libgsc

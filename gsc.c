@@ -39,7 +39,7 @@ static void print_operator(int op)
 			[TK_DECREMENT] = "--",	 [TK_DIV_ASSIGN] = "/=",	 [TK_MUL_ASSIGN] = "*=",
 			[TK_MOD_ASSIGN] = "%=",	 [TK_XOR_ASSIGN] = "^=",	 [TK_MINUS_ASSIGN] = "-=",
 			[TK_PLUS_ASSIGN] = "+=", [TK_EQUAL] = "==",			 [TK_NEQUAL] = "!=",
-			[TK_GEQUAL] ">=",		 [TK_LEQUAL] = "<=",		 NULL
+			[TK_GEQUAL] = ">=",		 [TK_LEQUAL] = "<=",		 NULL
 		};
 		if(op == TK_INCREMENT || op == TK_DECREMENT)
 			printf("%s", operators[op]);

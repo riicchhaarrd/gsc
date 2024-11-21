@@ -7,7 +7,9 @@
 #include "traverse.h"
 #include "compiler.h"
 #include "vm.h"
-#include <unistd.h>
+#ifndef _WIN32
+	#include <unistd.h>
+#endif
 #include "string_table.h"
 
 static char *read_text_file(const char *path)
