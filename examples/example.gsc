@@ -3,7 +3,7 @@
 	./build.sh
 	./gsc example
 
-	Usually these events or callbacks with function pointers get called from C, but this serves as a example.
+	Usually these events or callbacks with function pointers get called from C, but this serves as an example.
 */
 
 game = {}; // optionally use a global set from within C
