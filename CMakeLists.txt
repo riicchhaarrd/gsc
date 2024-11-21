@@ -39,7 +39,11 @@ set(SOURCES
     main.c
     precedence.c
 )
+if (NOT MSVC)
+add_library(libgsc STATIC ${SOURCES} library.c)
+else()
 add_library(libgsc SHARED ${SOURCES} library.c)
+endif()
 target_include_directories(libgsc PRIVATE include)
 target_compile_definitions(libgsc PRIVATE BUILD_LIB)
 set_property(TARGET libgsc PROPERTY OUTPUT_NAME gsc)
