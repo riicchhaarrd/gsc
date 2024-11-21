@@ -6,13 +6,15 @@
 	Usually these events or callbacks with function pointers get called from C, but this serves as a example.
 */
 
+game = {}; // optionally use a global set from within C
+
 my_coroutine1(dmg)
 {
 	// Coroutine instance will stop when this event happens.
-	level endon("game_ended");
+	game endon("game_ended");
 	
 	// Coroutine will block until this event happens.
-	level waittill("game_started");
+	game waittill("game_started");
 	
 	for(;;)
 	{
@@ -24,7 +26,8 @@ my_coroutine1(dmg)
 		println("Health: " + self.health);
 		wait 0.5; // Wait half a second.
 	}
-	[[ self.callbacks.dead ]]();
+	// [[ self.callbacks.dead ]](); // Alternative form of calling function pointer
+	self.callbacks.dead();
 	println("Entity " + self.name + " is dead.");
 }
 
@@ -48,9 +51,9 @@ main()
 	
 	wait 2; // Wait 2 seconds
 	println("[starting game]");
-	level notify("game_started"); // You can notify this through C aswell.
+	game notify("game_started"); // You can notify this through C aswell.
 	
 	wait 5;
 	println("[ending game]");
-	level notify("game_ended");
+	game notify("game_ended");
 }
