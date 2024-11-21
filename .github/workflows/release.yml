@@ -82,7 +82,7 @@ jobs:
       run: |
         mkdir -p release/include
         # Collect library files (.lib, .a)
-        find ./artifacts -type f \( -name "*.lib" -o -name "*.a" \) -exec cp {} release/ \;
+        find ./artifacts -type f \( -name "*.lib" -o -name "*.a" -o -name "*.dll" -o -name "*.so" -o -name "*.exe" \) -exec cp {} release/ \;
         # Collect header files
         cp ./artifacts/build-ubuntu-latest-gcc/gsc.h release/include/
 
