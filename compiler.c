@@ -487,7 +487,7 @@ IMPL_VISIT(ASTVectorExpr)
 {
 	for(size_t i = 0; i < n->numelements; ++i)
 	{
-		visit(n->elements[i]);
+		visit(n->elements[n->numelements - i - 1]);
 	}
 	emit1(c, OP_VECTOR, integer(n->numelements));
 }
