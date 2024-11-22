@@ -709,7 +709,7 @@ GSC_API void gsc_pop(gsc_Context *state, int count)
 		vm_pop(state->vm);
 }
 
-GSC_API void gsc_add_int(gsc_Context *state, int value)
+GSC_API void gsc_add_int(gsc_Context *state, int64_t value)
 {
 	vm_pushinteger(state->vm, value);
 
@@ -786,7 +786,7 @@ GSC_API float gsc_get_float(gsc_Context *state, int index)
 	return vm_checkfloat(state->vm, index);
 }
 
-GSC_API int gsc_to_int(gsc_Context *ctx, int index)
+GSC_API int64_t gsc_to_int(gsc_Context *ctx, int index)
 {
 	return vm_cast_int(ctx->vm, vm_stack_top(ctx->vm, index));
 }

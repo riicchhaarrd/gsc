@@ -22,7 +22,6 @@ extern "C"
 		GSC_OK,
 		GSC_ERROR,
 		GSC_YIELD,
-		// GSC_DONE,
 		GSC_NOT_FOUND,
 		GSC_OUT_OF_MEMORY
 	};
@@ -72,7 +71,6 @@ extern "C"
 	#define GSC_COMPILE_FLAG_NONE (0)
 	#define GSC_COMPILE_FLAG_PRINT_EXPRESSION (1)
 
-	// GSC_API int gsc_compile_source(gsc_Context *ctx, const char *filename, const char *source, int flags);
 	GSC_API int gsc_compile(gsc_Context *ctx, const char *filename, int flags);
 	GSC_API const char *gsc_next_compile_dependency(gsc_Context *ctx);
 	GSC_API void *gsc_temp_alloc(gsc_Context *ctx, int size);
@@ -100,29 +98,11 @@ extern "C"
 	} gsc_FieldEntry;
 
 	typedef struct gsc_Object gsc_Object;
-
-	// typedef struct gsc_ObjectProxy gsc_ObjectProxy;
-	// Push responsibility of comparing keys to the user of the library instead of allowing internal Object hash maps to
-	// store the keys with a function type like Lua does
-	// struct gsc_ObjectProxy
-	// {
-	// 	gsc_ObjectProxy *parent;
-	// 	void *ctx;
-	// 	int (*set)(gsc_Context *, void *ctx, gsc_Object *, const char *key, int key_index);		  // -1 not found
-	// 	int (*get)(gsc_Context *, void *ctx, gsc_Object *, const char *key, int key_index);		  // -1 not found
-	// 	int (*call)(gsc_Context *, void *ctx, gsc_Object *, const char *function, int key_index); // -1 not found
-	// };
-	// GSC_API extern gsc_ObjectProxy gsc_default_object_proxy;
 	GSC_API int gsc_register_string(gsc_Context *ctx, const char *s);
 	GSC_API const char *gsc_string(gsc_Context *ctx, int index);
 
-	// typedef int (*gsc_Method)(gsc_Context *, gsc_Object *);
 	GSC_API void gsc_register_function(gsc_Context *ctx, const char *file, const char *name, gsc_Function);
-	// GSC_API void gsc_register_method(gsc_Context *ctx, const char *file, const char *name, gsc_Method);
 
-	// GSC_API void gsc_object_set_userdata(gsc_Context *ctx, gsc_Object *, void *userdata);
-	// GSC_API void gsc_object_set_proxy(gsc_Context *ctx, gsc_Object *, gsc_ObjectProxy *proxy);
-	// GSC_API void gsc_object_set_field(gsc_Context *ctx, gsc_Object *, const char *name);
 	GSC_API void gsc_object_set_field(gsc_Context *ctx, int obj_index, const char *name);
 	GSC_API void gsc_object_get_field(gsc_Context *ctx, int obj_index, const char *name);
 	GSC_API const char *gsc_object_get_tag(gsc_Context *ctx, int obj_index);
@@ -138,15 +118,13 @@ extern "C"
 	// Push specific types onto the stack
 	GSC_API int gsc_add_object(gsc_Context *ctx); // Push an new object
 	GSC_API int gsc_add_tagged_object(gsc_Context *ctx, const char *tag);
-	// GSC_API int gsc_object_get_base(gsc_Context *ctx, int obj_index);
 	GSC_API int gsc_object_get_proxy(gsc_Context *ctx, int obj_index);
 	GSC_API void gsc_object_set_proxy(gsc_Context *ctx, int obj_index, int proxy_index);
 
 	GSC_API void *gsc_object_get_userdata(gsc_Context *ctx, int obj_index);
 	GSC_API void gsc_object_set_userdata(gsc_Context *ctx, int obj_index, void *userdata);
 
-	// GSC_API void gsc_new_object(gsc_Context *ctx, gsc_ObjectProxy *proxy, void *userdata); // Push an new object
-	GSC_API void gsc_add_int(gsc_Context *ctx, int value);			  // Push an integer
+	GSC_API void gsc_add_int(gsc_Context *ctx, int64_t value);			  // Push an integer
 	GSC_API void gsc_add_float(gsc_Context *ctx, float value);		  // Push a float
 	GSC_API void gsc_add_string(gsc_Context *ctx, const char *value); // Push a string
 	GSC_API void gsc_add_vec3(gsc_Context *ctx, /*const*/ float *value); // Push a vec3
@@ -154,7 +132,7 @@ extern "C"
 	GSC_API void gsc_add_bool(gsc_Context *state, int cond);
 
 	// Conversion functions to retrieve values from the stack
-	GSC_API int gsc_to_int(gsc_Context *ctx, int index);
+	GSC_API int64_t gsc_to_int(gsc_Context *ctx, int index);
 	GSC_API float gsc_to_float(gsc_Context *ctx, int index);
 	GSC_API const char *gsc_to_string(gsc_Context *ctx, int index);
 

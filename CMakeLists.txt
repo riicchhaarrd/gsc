@@ -72,7 +72,7 @@ else()
     # target_link_libraries(gsc m)
 endif()
 
-add_executable(gsc examples/gsc.c)
+add_executable(gsc examples/gsc.c examples/functions.c)
 target_link_libraries(gsc PRIVATE libgsc)
 if (NOT MSVC)
 	target_link_libraries(gsc PRIVATE m)
