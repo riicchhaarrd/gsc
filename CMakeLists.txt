@@ -1,5 +1,8 @@
-cmake_minimum_required(VERSION 3.10)
-project(gsc VERSION 0.1 LANGUAGES C)
+cmake_minimum_required(VERSION 3.12)
+project(gsc VERSION 0.0.1 LANGUAGES C)
+
+set(CMAKE_C_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN YES)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
@@ -39,11 +42,20 @@ set(SOURCES
     main.c
     precedence.c
 )
-if (NOT MSVC)
-add_library(libgsc STATIC ${SOURCES} library.c)
+if (MSVC)
+	add_library(libgsc SHARED ${SOURCES} library.c)
 else()
-add_library(libgsc SHARED ${SOURCES} library.c)
+	if(EMSCRIPTEN)
+		add_library(libgsc STATIC ${SOURCES} library.c)
+	else()
+		add_library(libgsc SHARED ${SOURCES} library.c)
+	endif()
 endif()
+set_target_properties(
+	libgsc PROPERTIES
+	SOVERSION 0
+	VERSION 0.0.1
+)
 target_include_directories(libgsc PRIVATE include)
 target_compile_definitions(libgsc PRIVATE BUILD_LIB)
 set_property(TARGET libgsc PROPERTY OUTPUT_NAME gsc)
@@ -65,7 +77,7 @@ if (MSVC)
 else()
     target_compile_definitions(libgsc PRIVATE GSC_EXPORTS)
     #target_compile_options(libgsc PRIVATE -Wall -Wextra -Werror -fPIC -fvisibility=hidden)
-    target_compile_options(libgsc PRIVATE -w -fPIC -fvisibility=hidden)
+    target_compile_options(libgsc PRIVATE -w -fPIC -fvisibility=hidden -fvisibility-inlines-hidden)
     target_link_libraries(libgsc PRIVATE m)
     
     # target_compile_options(gsc PRIVATE -Wall -Wextra -Werror -fPIC -fvisibility=hidden)
@@ -88,3 +100,24 @@ if (NOT EMSCRIPTEN)
 		endif()
 	endif()
 endif()
+
+include(GenerateExportHeader)
+generate_export_header(libgsc)
+
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+	GSCConfigVersion.cmake
+	VERSION 0.0.1
+	COMPATIBILITY SameMajorVersion
+)
+
+include(GNUInstallDirs)
+install(TARGETS libgsc
+	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+	COMPONENT GSC_Runtime
+	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+	COMPONENT GSC_Runtime
+	NAMELINK_COMPONENT GSC_Development
+	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+	COMPONENT GSC_Development
+)
