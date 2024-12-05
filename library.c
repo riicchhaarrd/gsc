@@ -801,6 +801,15 @@ GSC_API const char *gsc_to_string(gsc_Context *ctx, int index)
 	return vm_cast_string(ctx->vm, vm_stack_top(ctx->vm, index));
 }
 
+GSC_API void gsc_to_function(gsc_Context *ctx, int index, const char **file, const char **function)
+{
+	Variable *v = vm_stack_top(ctx->vm, index);
+	if(v->type != VAR_FUNCTION || v->u.funval.is_native)
+		vm_error(ctx->vm, "Not a function");
+	*file = gsc_string(ctx, v->u.funval.file);
+	*function = gsc_string(ctx, v->u.funval.function);
+}
+
 // Only valid in callback of functions added with gsc_register_function
 GSC_API const char *gsc_get_string(gsc_Context *state, int index)
 {

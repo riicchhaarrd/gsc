@@ -72,19 +72,19 @@ else()
     # target_link_libraries(gsc m)
 endif()
 
-add_executable(gsc examples/gsc.c examples/functions.c)
-target_link_libraries(gsc PRIVATE libgsc)
-if (NOT MSVC)
-	target_link_libraries(gsc PRIVATE m)
-endif()
+if (NOT EMSCRIPTEN)
+	add_executable(gsc examples/gsc.c examples/functions.c)
+	target_link_libraries(gsc PRIVATE libgsc)
+	if (NOT MSVC)
+		target_link_libraries(gsc PRIVATE m)
 
-if (NOT EMSCRIPTEN AND NOT MSVC)
-	if (CMAKE_BUILD_TYPE STREQUAL "Release")
-	add_custom_command(
-			TARGET libgsc
-			POST_BUILD
-			COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:libgsc>
-			COMMENT "Stripping unneeded symbols from libgsc"
-			)
+		if (CMAKE_BUILD_TYPE STREQUAL "Release")
+		add_custom_command(
+				TARGET libgsc
+				POST_BUILD
+				COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:libgsc>
+				COMMENT "Stripping unneeded symbols from libgsc"
+				)
+		endif()
 	endif()
 endif()
