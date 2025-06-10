@@ -6,6 +6,7 @@
 #include <gsc.h>
 #include <inttypes.h>
 #include <stdio.h>
+#include <ctype.h>
 
 typedef float vec3[3];
 
