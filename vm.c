@@ -2162,10 +2162,14 @@ int vm_checkobject(VM *vm, int idx)
 	return vm->fsp - 3 - idx;
 }
 
-float vm_checkfloat(VM *vm, int idx)
-{
-	return vm_cast_float(vm, vm_argv(vm, idx));
-}
+#define DEFINE_VM_CHECK_FUNC(name, type, cast_func) \
+	type vm_check##name(VM *vm, int idx) { \
+		return cast_func(vm, vm_argv(vm, idx)); \
+	}
+
+DEFINE_VM_CHECK_FUNC(float, float, vm_cast_float)
+DEFINE_VM_CHECK_FUNC(bool, bool, vm_cast_bool)
+DEFINE_VM_CHECK_FUNC(integer, int64_t, vm_cast_int)
 
 bool vm_cast_bool(VM *vm, Variable *arg)
 {
@@ -2174,21 +2178,11 @@ bool vm_cast_bool(VM *vm, Variable *arg)
 	return arg->u.ival;
 }
 
-bool vm_checkbool(VM *vm, int idx)
-{
-	return vm_cast_bool(vm, vm_argv(vm, idx));
-}
-
 int64_t vm_cast_int(VM *vm, Variable *arg)
 {
 	if(arg->type != VAR_INTEGER)
 		vm_error(vm, "Not a integer");
 	return arg->u.ival;
-}
-
-int64_t vm_checkinteger(VM *vm, int idx)
-{
-	return vm_cast_int(vm, vm_argv(vm, idx));
 }
 
 void vm_pushstring_n(VM *vm, const char *str, size_t n) // n is without \0
@@ -2243,29 +2237,17 @@ Thread *vm_thread(VM *vm)
 	return vm->thread;
 }
 
-void vm_pushinteger(VM *vm, int64_t val)
-{
-    Variable v = var(vm);
-    v.type = VAR_INTEGER;
-	v.u.ival = val;
-    push(vm, v);
-}
+#define DEFINE_VM_PUSH_FUNC(name, ctype, var_type, assignment) \
+	void vm_push##name(VM *vm, ctype val) { \
+		Variable v = var(vm); \
+		v.type = var_type; \
+		assignment; \
+		push(vm, v); \
+	}
 
-void vm_pushfloat(VM *vm, float val)
-{
-    Variable v = var(vm);
-    v.type = VAR_FLOAT;
-	v.u.fval = val;
-    push(vm, v);
-}
-
-void vm_pushbool(VM *vm, bool b)
-{
-    Variable v = var(vm);
-    v.type = VAR_BOOLEAN;
-	v.u.ival = b ? 1 : 0;
-    push(vm, v);
-}
+DEFINE_VM_PUSH_FUNC(integer, int64_t, VAR_INTEGER, v.u.ival = val)
+DEFINE_VM_PUSH_FUNC(float, float, VAR_FLOAT, v.u.fval = val)
+DEFINE_VM_PUSH_FUNC(bool, bool, VAR_BOOLEAN, v.u.ival = val ? 1 : 0)
 
 void vm_pushundefined(VM *vm)
 {

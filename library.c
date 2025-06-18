@@ -295,45 +295,31 @@ static void create_default_object_proxy(gsc_Context *ctx)
 	gsc_set_global(ctx, "object");
 }
 
-GSC_API gsc_Context *gsc_create(gsc_CreateOptions options)
+static void gsc_init_allocator(gsc_Context *ctx)
 {
-	gsc_Context *ctx = options.allocate_memory(options.userdata, sizeof(gsc_Context));
-	memset(ctx, 0, sizeof(gsc_Context));
-	ctx->options = options;
-
-	if(setjmp(ctx->jmp_oom))
-	{
-		// printf("Out of memory\n");
-		return NULL;
-	}
-
 	ctx->allocator.ctx = ctx;
 	ctx->allocator.malloc = gsc_malloc;
 	ctx->allocator.free = gsc_free;
+}
 
-	hash_trie_init(&ctx->files);
-
-	// TODO: FIXME
-	// #define HEAP_SIZE (512 * 1024 * 1024)
-	// #define HEAP_SIZE (28 * 1024 * 1024)
-	// #define HEAP_SIZE (85 * 1024 * 1024)
-	// #define HEAP_SIZE (83 * 1024 * 1024)
+static void gsc_init_memory_arenas(gsc_Context *ctx, gsc_CreateOptions options)
+{
 	ctx->heap = options.allocate_memory(options.userdata, options.main_memory_size);
 	arena_init(&ctx->perm, ctx->heap, options.main_memory_size);
 	ctx->perm.jmp_oom = &ctx->jmp_oom;
 	
-	// #define TEMP_SIZE (20 * 1024 * 1024)
-
 	arena_init(&ctx->temp, new(&ctx->perm, char, options.temp_memory_size), options.temp_memory_size);
 	ctx->temp.jmp_oom = ctx->perm.jmp_oom;
 
-	// #define STRTAB_SIZE (1 * 1024 * 1024)
 	Arena strtab_arena;
 	arena_init(&strtab_arena, new(&ctx->perm, char, options.string_table_memory_size), options.string_table_memory_size);
 	strtab_arena.jmp_oom = ctx->perm.jmp_oom;
 
 	string_table_init(&ctx->strtab, strtab_arena);
+}
 
+static void gsc_init_vm(gsc_Context *ctx, gsc_CreateOptions options)
+{
 	VM *vm = new(&ctx->perm, VM, 1);
 	vm_init(vm, &ctx->allocator, &ctx->strtab, options.default_self, options.max_threads);
 	vm->flags = VM_FLAG_NONE;
@@ -342,8 +328,24 @@ GSC_API gsc_Context *gsc_create(gsc_CreateOptions options)
 	vm->jmp = &ctx->jmp_oom;
 	vm->ctx = ctx;
 	vm->func_lookup = vm_func_lookup;
-
 	ctx->vm = vm;
+}
+
+GSC_API gsc_Context *gsc_create(gsc_CreateOptions options)
+{
+	gsc_Context *ctx = options.allocate_memory(options.userdata, sizeof(gsc_Context));
+	memset(ctx, 0, sizeof(gsc_Context));
+	ctx->options = options;
+
+	if(setjmp(ctx->jmp_oom))
+	{
+		return NULL;
+	}
+
+	gsc_init_allocator(ctx);
+	hash_trie_init(&ctx->files);
+	gsc_init_memory_arenas(ctx, options);
+	gsc_init_vm(ctx, options);
 	create_default_object_proxy(ctx);
 	return ctx;
 }
@@ -714,6 +716,16 @@ GSC_API void gsc_pop(gsc_Context *state, int count)
 		push_func(ctx->vm, value); \
 	}
 
+#define DEFINE_GSC_GET_FUNC(name, type, check_func) \
+	GSC_API type gsc_get_##name(gsc_Context *ctx, int index) { \
+		return check_func(ctx->vm, index); \
+	}
+
+#define DEFINE_GSC_TO_FUNC(name, type, cast_func) \
+	GSC_API type gsc_to_##name(gsc_Context *ctx, int index) { \
+		return cast_func(ctx->vm, vm_stack_top(ctx->vm, index)); \
+	}
+
 DEFINE_GSC_ADD_FUNC(int, int64_t, vm_pushinteger)
 DEFINE_GSC_ADD_FUNC(float, float, vm_pushfloat)
 DEFINE_GSC_ADD_FUNC(string, const char*, vm_pushstring)
@@ -733,14 +745,11 @@ GSC_API void gsc_add_function(gsc_Context *ctx, gsc_Function value)
 	vm_pushvar(ctx->vm, &v);
 }
 
-#define DEFINE_GSC_GET_FUNC(name, type, check_func) \
-	GSC_API type gsc_get_##name(gsc_Context *ctx, int index) { \
-		return check_func(ctx->vm, index); \
-	}
-
 DEFINE_GSC_GET_FUNC(int, int64_t, vm_checkinteger)
 DEFINE_GSC_GET_FUNC(bool, int, vm_checkbool)
 DEFINE_GSC_GET_FUNC(object, int, vm_checkobject)
+DEFINE_GSC_GET_FUNC(float, float, vm_checkfloat)
+DEFINE_GSC_GET_FUNC(string, const char*, vm_checkstring)
 
 GSC_API void* gsc_get_ptr(gsc_Context *ctx, int index)
 {
@@ -764,14 +773,6 @@ GSC_API int gsc_numargs(gsc_Context *ctx)
 {
 	return ctx->vm->nargs;
 }
-
-DEFINE_GSC_GET_FUNC(float, float, vm_checkfloat)
-DEFINE_GSC_GET_FUNC(string, const char*, vm_checkstring)
-
-#define DEFINE_GSC_TO_FUNC(name, type, cast_func) \
-	GSC_API type gsc_to_##name(gsc_Context *ctx, int index) { \
-		return cast_func(ctx->vm, vm_stack_top(ctx->vm, index)); \
-	}
 
 DEFINE_GSC_TO_FUNC(int, int64_t, vm_cast_int)
 DEFINE_GSC_TO_FUNC(float, float, vm_cast_float)
