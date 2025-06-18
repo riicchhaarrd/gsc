@@ -574,35 +574,37 @@ static int64_t pop_int(VM *vm)
     return i;
 }
 
+static void validate_operand_type(VM *vm, Operand *op, OperandType expected_type, const char *type_name)
+{
+    if(op->type != expected_type)
+        vm_error(vm, "Operand '%s' is not a %s", operand_type_names[op->type], type_name);
+}
+
 static int64_t read_int(VM *vm, Instruction *ins, size_t idx)
 {
     Operand *op = &ins->operands[idx];
-    if(op->type != OPERAND_TYPE_INT)
-		vm_error(vm, "Operand '%s' is not a integer", operand_type_names[op->type]);
+    validate_operand_type(vm, op, OPERAND_TYPE_INT, "integer");
     return op->value.integer;
 }
 
 static int read_string_index(VM *vm, Instruction *ins, size_t idx)
 {
     Operand *op = &ins->operands[idx];
-    if(op->type != OPERAND_TYPE_INDEXED_STRING)
-		vm_error(vm, "Operand '%s' is not a string", operand_type_names[op->type]);
-	return op->value.string_index;
+    validate_operand_type(vm, op, OPERAND_TYPE_INDEXED_STRING, "string");
+    return op->value.string_index;
 }
 
 static const char* read_string(VM *vm, Instruction *ins, size_t idx)
 {
     Operand *op = &ins->operands[idx];
-    if(op->type != OPERAND_TYPE_INDEXED_STRING)
-		vm_error(vm, "Operand '%s' is not a string", operand_type_names[op->type]);
-	return string_table_get(vm->strings, op->value.string_index);
+    validate_operand_type(vm, op, OPERAND_TYPE_INDEXED_STRING, "string");
+    return string_table_get(vm->strings, op->value.string_index);
 }
 
 static float read_float(VM *vm, Instruction *ins, size_t idx)
 {
     Operand *op = &ins->operands[idx];
-    if(op->type != OPERAND_TYPE_FLOAT)
-		vm_error(vm, "Operand '%s' is not a float", operand_type_names[op->type]);
+    validate_operand_type(vm, op, OPERAND_TYPE_FLOAT, "float");
     return op->value.number;
 }
 
@@ -713,47 +715,51 @@ const char *vm_stringify(VM *vm, Variable *v, char *buf, size_t n)
 	return NULL;
 }
 
-static Variable coerce_int(VM *vm, Variable *v)
+static Variable coerce_type(VM *vm, Variable *v, VariableType target_type)
 {
-	Variable result = { .type = VAR_INTEGER };
-	switch(v->type)
-	{
-		case VAR_BOOLEAN:
-		case VAR_INTEGER: result = *v; break;
-		case VAR_FLOAT: result.u.ival = (int64_t)v->u.fval; break;
-		case VAR_INTERNED_STRING:
-		case VAR_STRING: result.u.ival = strtoll(variable_string(vm, v), NULL, 10); break;
-		default: vm_error(vm, "Cannot coerce '%s' to integer", variable_type_names[v->type]); break;
+	Variable result = { .type = target_type };
+	
+	switch(target_type) {
+		case VAR_INTEGER:
+			switch(v->type) {
+				case VAR_BOOLEAN:
+				case VAR_INTEGER: result = *v; break;
+				case VAR_FLOAT: result.u.ival = (int64_t)v->u.fval; break;
+				case VAR_INTERNED_STRING:
+				case VAR_STRING: result.u.ival = strtoll(variable_string(vm, v), NULL, 10); break;
+				default: vm_error(vm, "Cannot coerce '%s' to integer", variable_type_names[v->type]); break;
+			}
+			break;
+			
+		case VAR_FLOAT:
+			switch(v->type) {
+				case VAR_INTEGER: result.u.fval = (float)v->u.ival; break;
+				case VAR_FLOAT: result = *v; break;
+				case VAR_INTERNED_STRING:
+				case VAR_STRING: result.u.fval = atof(variable_string(vm, v)); break;
+				default: vm_error(vm, "Cannot coerce '%s' to float", variable_type_names[v->type]); break;
+			}
+			break;
+			
+		case VAR_VECTOR:
+			switch(v->type) {
+				case VAR_INTEGER: for(int i = 0; i < 3; ++i) result.u.vval[i] = (float)v->u.ival; break;
+				case VAR_FLOAT: for(int i = 0; i < 3; ++i) result.u.vval[i] = v->u.fval; break;
+				case VAR_VECTOR: return *v;
+				default: vm_error(vm, "Cannot coerce '%s' to vector", variable_type_names[v->type]); break;
+			}
+			break;
+			
+		default:
+			vm_error(vm, "Unsupported coercion target type");
+			break;
 	}
 	return result;
 }
 
-static Variable coerce_vector(VM *vm, Variable *v)
-{
-	Variable result = { .type = VAR_VECTOR };
-	switch(v->type)
-	{
-		case VAR_INTEGER: for(int i = 0; i < 3; ++i) result.u.vval[i] = (float)v->u.ival; break;
-		case VAR_FLOAT: for(int i = 0; i < 3; ++i) result.u.vval[i] = v->u.fval; break;
-		case VAR_VECTOR: return *v;
-		default: vm_error(vm, "Cannot coerce '%s' to vector", variable_type_names[v->type]); break;
-	}
-	return result;
-}
-
-static Variable coerce_float(VM *vm, Variable *v)
-{
-	Variable result = { .type = VAR_FLOAT };
-	switch(v->type)
-	{
-		case VAR_INTEGER: result.u.fval = (float)v->u.ival; break;
-		case VAR_FLOAT: result = *v; break;
-		case VAR_INTERNED_STRING:
-		case VAR_STRING: result.u.fval = atof(variable_string(vm, v)); break;
-		default: vm_error(vm, "Cannot coerce '%s' to float", variable_type_names[v->type]); break;
-	}
-	return result;
-}
+#define coerce_int(vm, v) coerce_type(vm, v, VAR_INTEGER)
+#define coerce_float(vm, v) coerce_type(vm, v, VAR_FLOAT)
+#define coerce_vector(vm, v) coerce_type(vm, v, VAR_VECTOR)
 
 static Variable unary(VM *vm, Variable *arg, int op)
 {

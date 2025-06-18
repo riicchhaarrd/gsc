@@ -709,11 +709,16 @@ GSC_API void gsc_pop(gsc_Context *state, int count)
 		vm_pop(state->vm);
 }
 
-GSC_API void gsc_add_int(gsc_Context *state, int64_t value)
-{
-	vm_pushinteger(state->vm, value);
+#define DEFINE_GSC_ADD_FUNC(name, type, push_func) \
+	GSC_API void gsc_add_##name(gsc_Context *ctx, type value) { \
+		push_func(ctx->vm, value); \
+	}
 
-}
+DEFINE_GSC_ADD_FUNC(int, int64_t, vm_pushinteger)
+DEFINE_GSC_ADD_FUNC(float, float, vm_pushfloat)
+DEFINE_GSC_ADD_FUNC(string, const char*, vm_pushstring)
+DEFINE_GSC_ADD_FUNC(bool, int, vm_pushbool)
+
 GSC_API void gsc_add_vec3(gsc_Context *ctx, /*const*/ float *value)
 {
 	vm_pushvector(ctx->vm, value);
@@ -728,25 +733,14 @@ GSC_API void gsc_add_function(gsc_Context *ctx, gsc_Function value)
 	vm_pushvar(ctx->vm, &v);
 }
 
-GSC_API void gsc_add_bool(gsc_Context *ctx, int cond)
-{
-	vm_pushbool(ctx->vm, cond);
-}
+#define DEFINE_GSC_GET_FUNC(name, type, check_func) \
+	GSC_API type gsc_get_##name(gsc_Context *ctx, int index) { \
+		return check_func(ctx->vm, index); \
+	}
 
-GSC_API void gsc_add_float(gsc_Context *state, float value)
-{
-	vm_pushfloat(state->vm, value);
-}
-
-GSC_API void gsc_add_string(gsc_Context *state, const char *value)
-{
-	vm_pushstring(state->vm, value);
-}
-
-GSC_API int64_t gsc_get_int(gsc_Context *state, int index)
-{
-	return vm_checkinteger(state->vm, index);
-}
+DEFINE_GSC_GET_FUNC(int, int64_t, vm_checkinteger)
+DEFINE_GSC_GET_FUNC(bool, int, vm_checkbool)
+DEFINE_GSC_GET_FUNC(object, int, vm_checkobject)
 
 GSC_API void* gsc_get_ptr(gsc_Context *ctx, int index)
 {
@@ -756,19 +750,9 @@ GSC_API void* gsc_get_ptr(gsc_Context *ctx, int index)
 	return NULL;
 }
 
-GSC_API int gsc_get_bool(gsc_Context *state, int index)
-{
-	return vm_checkbool(state->vm, index);
-}
-
 GSC_API void gsc_get_vec3(gsc_Context *ctx, int index, float *v)
 {
 	vm_checkvector(ctx->vm, index, v);
-}
-
-GSC_API int gsc_get_object(gsc_Context *state, int index)
-{
-	return vm_checkobject(state->vm, index);
 }
 
 GSC_API int gsc_arg(gsc_Context *ctx, int index)
@@ -781,31 +765,17 @@ GSC_API int gsc_numargs(gsc_Context *ctx)
 	return ctx->vm->nargs;
 }
 
-GSC_API float gsc_get_float(gsc_Context *state, int index)
-{
-	return vm_checkfloat(state->vm, index);
-}
+DEFINE_GSC_GET_FUNC(float, float, vm_checkfloat)
+DEFINE_GSC_GET_FUNC(string, const char*, vm_checkstring)
 
-GSC_API int64_t gsc_to_int(gsc_Context *ctx, int index)
-{
-	return vm_cast_int(ctx->vm, vm_stack_top(ctx->vm, index));
-}
+#define DEFINE_GSC_TO_FUNC(name, type, cast_func) \
+	GSC_API type gsc_to_##name(gsc_Context *ctx, int index) { \
+		return cast_func(ctx->vm, vm_stack_top(ctx->vm, index)); \
+	}
 
-GSC_API float gsc_to_float(gsc_Context *ctx, int index)
-{
-	return vm_cast_float(ctx->vm, vm_stack_top(ctx->vm, index));
-}
-
-GSC_API const char *gsc_to_string(gsc_Context *ctx, int index)
-{
-	return vm_cast_string(ctx->vm, vm_stack_top(ctx->vm, index));
-}
-
-// Only valid in callback of functions added with gsc_register_function
-GSC_API const char *gsc_get_string(gsc_Context *state, int index)
-{
-	return vm_checkstring(state->vm, index);
-}
+DEFINE_GSC_TO_FUNC(int, int64_t, vm_cast_int)
+DEFINE_GSC_TO_FUNC(float, float, vm_cast_float)
+DEFINE_GSC_TO_FUNC(string, const char*, vm_cast_string)
 
 GSC_API void *gsc_get_internal_pointer(gsc_Context *state, const char *tag)
 {

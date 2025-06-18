@@ -4,6 +4,7 @@
 #include "compiler.h"
 #include "variable.h"
 #include <inttypes.h>
+#include <stdarg.h>
 #include "include/gsc.h"
 
 static void property(Compiler *c, ASTNode *n, int op);
@@ -122,7 +123,7 @@ static Operand number(float f)
 
 static Operand NONE = { .type = OPERAND_TYPE_NONE };
 
-static size_t emit(Compiler *c, Opcode op)
+static size_t emit_base(Compiler *c, Opcode op)
 {
 	if(c->instruction_count >= c->max_instruction_count)
 		error(c, "Max instructions reached");
@@ -134,30 +135,22 @@ static size_t emit(Compiler *c, Opcode op)
 	return instr->offset;
 }
 
-static size_t emit1(Compiler *c, Opcode opcode, Operand operand1)
+static size_t emit_operands(Compiler *c, Opcode opcode, int operand_count, ...)
 {
-	size_t idx = emit(c, opcode);
-	c->instructions[idx].operands[0] = operand1;
+	size_t idx = emit_base(c, opcode);
+	va_list args;
+	va_start(args, operand_count);
+	for(int i = 0; i < operand_count; i++) {
+		c->instructions[idx].operands[i] = va_arg(args, Operand);
+	}
+	va_end(args);
 	return idx;
 }
 
-static size_t emit2(Compiler *c, Opcode opcode, Operand operand1, Operand operand2)
-{
-	size_t idx = emit(c, opcode);
-	c->instructions[idx].operands[0] = operand1;
-	c->instructions[idx].operands[1] = operand2;
-	return idx;
-}
-
-static size_t emit4(Compiler *c, Opcode opcode, Operand operand1, Operand operand2, Operand operand3, Operand operand4)
-{
-	size_t idx = emit(c, opcode);
-	c->instructions[idx].operands[0] = operand1;
-	c->instructions[idx].operands[1] = operand2;
-	c->instructions[idx].operands[2] = operand3;
-	c->instructions[idx].operands[3] = operand4;
-	return idx;
-}
+#define emit(c, op) emit_base(c, op)
+#define emit1(c, op, o1) emit_operands(c, op, 1, o1)
+#define emit2(c, op, o1, o2) emit_operands(c, op, 2, o1, o2)
+#define emit4(c, op, o1, o2, o3, o4) emit_operands(c, op, 4, o1, o2, o3, o4)
 
 // Program counter
 static int ip(Compiler *c)
