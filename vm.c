@@ -1921,7 +1921,7 @@ void vm_set_object_field(VM *vm, int obj_index, const char *key)
 
 void vm_init(VM *vm, Allocator *allocator, StringTable *strtab, const char *default_self, int max_threads)
 {
-	memset(vm, 0, sizeof(vm));
+	memset(vm, 0, sizeof(*vm));
 	vm->thread = &vm->temp_thread;
 	vm->max_threads = max_threads;
 	vm->allocator = allocator;
