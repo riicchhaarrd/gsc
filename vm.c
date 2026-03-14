@@ -393,6 +393,9 @@ static void decref(VM *vm, Variable *v)
 	--o->refcount;
 }
 
+void vm_incref(VM *vm, Variable *v) { incref(vm, v); }
+void vm_decref(VM *vm, Variable *v) { decref(vm, v); }
+
 static void free_var(VM *vm, Variable *v)
 {
 	switch(v->type)

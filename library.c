@@ -347,6 +347,23 @@ GSC_API gsc_Context *gsc_create(gsc_CreateOptions options)
 	gsc_init_memory_arenas(ctx, options);
 	gsc_init_vm(ctx, options);
 	create_default_object_proxy(ctx);
+
+	/* Initialize reference registry */
+	{
+		int cap = options.ref_capacity > 0 ? options.ref_capacity : GSC_DEFAULT_REF_CAPACITY;
+		ctx->ref_capacity = cap;
+		ctx->ref_slots = options.allocate_memory(options.userdata, cap * (int)sizeof(gsc_RefSlot));
+		/* Chain all slots into a free list */
+		for(int i = 0; i < cap; ++i)
+		{
+			ctx->ref_slots[i].value.type = VAR_UNDEFINED;
+			ctx->ref_slots[i].value.u.ival = 0;
+			ctx->ref_slots[i].next_free = i + 1;
+		}
+		ctx->ref_slots[cap - 1].next_free = -1; /* end of list */
+		ctx->ref_free = 0;
+	}
+
 	return ctx;
 }
 
@@ -354,9 +371,17 @@ GSC_API void gsc_destroy(gsc_Context *state)
 {
 	if(state)
 	{
+		/* Release all outstanding refs before tearing down the VM */
+		for(int i = 0; i < state->ref_capacity; ++i)
+		{
+			if(state->ref_slots[i].next_free == -1) /* occupied */
+				gsc_unref(state, (gsc_Ref)i);
+		}
+
 		vm_cleanup(state->vm);
 
 		gsc_CreateOptions opts = state->options;
+		opts.free_memory(opts.userdata, state->ref_slots);
 		opts.free_memory(opts.userdata, state->heap);
 		// opts.free_memory(opts.userdata, state->vm);
 		opts.free_memory(opts.userdata, state);
@@ -777,6 +802,61 @@ GSC_API int gsc_numargs(gsc_Context *ctx)
 DEFINE_GSC_TO_FUNC(int, int64_t, vm_cast_int)
 DEFINE_GSC_TO_FUNC(float, float, vm_cast_float)
 DEFINE_GSC_TO_FUNC(string, const char*, vm_cast_string)
+
+GSC_API gsc_Ref gsc_ref(gsc_Context *ctx, int stack_index)
+{
+	VM *vm = ctx->vm;
+	if(ctx->ref_free == -1)
+	{
+		vm_error(vm, "gsc_ref: registry full (%d slots)", ctx->ref_capacity);
+		return GSC_NOREF;
+	}
+
+	int slot = ctx->ref_free;
+	gsc_RefSlot *s = &ctx->ref_slots[slot];
+
+	/* Pop slot from free list */
+	ctx->ref_free = s->next_free;
+
+	/* Store the value and mark occupied */
+	s->value = *vm_stack(vm, stack_index);
+	s->next_free = -1; /* -1 = occupied */
+
+	/* Bump refcount so VM won't reclaim this object */
+	vm_incref(vm, &s->value);
+
+	return (gsc_Ref)slot;
+}
+
+GSC_API void gsc_push_ref(gsc_Context *ctx, gsc_Ref ref)
+{
+	VM *vm = ctx->vm;
+	if(ref < 0 || ref >= ctx->ref_capacity || ctx->ref_slots[ref].next_free != -1)
+	{
+		vm_error(vm, "gsc_push_ref: invalid ref %d", (int)ref);
+		return;
+	}
+	Variable *v = &ctx->ref_slots[ref].value;
+	if(v->type == VAR_OBJECT)
+		vm_pushobject(vm, v->u.oval);
+	else
+		vm_pushvar(vm, v);
+}
+
+GSC_API void gsc_unref(gsc_Context *ctx, gsc_Ref ref)
+{
+	if(ref < 0 || ref >= ctx->ref_capacity || ctx->ref_slots[ref].next_free != -1)
+		return;
+
+	gsc_RefSlot *s = &ctx->ref_slots[ref];
+	vm_decref(ctx->vm, &s->value);
+
+	/* Clear and push back onto free list */
+	s->value.type = VAR_UNDEFINED;
+	s->value.u.ival = 0;
+	s->next_free = ctx->ref_free;
+	ctx->ref_free = ref;
+}
 
 GSC_API void *gsc_get_internal_pointer(gsc_Context *state, const char *tag)
 {

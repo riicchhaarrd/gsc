@@ -284,6 +284,8 @@ Variable *vm_argv(VM *vm, int idx);
 Variable vm_create_object(VM *vm);
 void vm_pushvar(VM *vm, Variable*);
 int vm_pushobject(VM *vm, Object *o);
+void vm_incref(VM *vm, Variable *v);
+void vm_decref(VM *vm, Variable *v);
 Thread *vm_thread(VM*);
 void vm_print_thread_info(VM *vm);
 void vm_notify(VM *vm, Object *object, const char *key, size_t nargs);
