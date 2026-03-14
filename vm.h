@@ -287,6 +287,7 @@ int vm_pushobject(VM *vm, Object *o);
 Thread *vm_thread(VM*);
 void vm_print_thread_info(VM *vm);
 void vm_notify(VM *vm, Object *object, const char *key, size_t nargs);
+void vm_notify_args(VM *vm, Object *object, const char *key, const Variable *args, size_t nargs);
 void vm_error(VM *vm, const char *fmt, ...);
 // Variable* vm_dup(VM *vm, Variable* v);
 void vm_set_object_field(VM *vm, int obj_index, const char *key);

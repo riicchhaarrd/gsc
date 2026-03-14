@@ -2488,10 +2488,8 @@ static void free_event(VMEvent *ev)
 	ev->frame = -1;
 }
 
-void vm_notify(VM *vm, Object *object, const char *key, size_t nargs)
+void vm_notify_args(VM *vm, Object *object, const char *key, const Variable *args, size_t nargs)
 {
-	// TODO: args
-
 	int name = vm_string_index(vm, key);
 	if(name == -1)
 	{
@@ -2501,17 +2499,30 @@ void vm_notify(VM *vm, Object *object, const char *key, size_t nargs)
 	VMEvent *ev = get_free_event(vm);
 	ev->object = object;
 	ev->name = name;
-	for(int i = 1; i < nargs; i++)
+	for(size_t i = 0; i < nargs && i < VM_MAX_EVENT_ARGS; ++i)
 	{
-		ev->arguments[i - 1] = *vm_argv(vm, i);
+		ev->arguments[i] = args[i];
 	}
-	ev->numargs = nargs - 1;
+	ev->numargs = (int)nargs;
 	ev->frame = vm->frame;
 	// VMEvent ev = { .object = object, .name = name, .arguments = NULL };
 	// if(vm->event_count >= VM_MAX_EVENTS_PER_FRAME)
 	// 	vm_error(vm, "event_count >= VM_MAX_EVENTS_PER_FRAME");
 	// vm->events[vm->event_count++] = ev;
 	// buf_push(vm->events, ev);
+}
+
+void vm_notify(VM *vm, Object *object, const char *key, size_t nargs)
+{
+	Variable args[VM_MAX_EVENT_ARGS];
+	size_t count = 0;
+
+	for(size_t i = 1; i < nargs && count < VM_MAX_EVENT_ARGS; ++i)
+	{
+		args[count++] = *vm_argv(vm, (int)i);
+	}
+
+	vm_notify_args(vm, object, key, args, count);
 }
 
 static void run_thread(VM *vm)
