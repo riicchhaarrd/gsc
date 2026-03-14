@@ -144,7 +144,7 @@ ASTNode *call_expression(Parser *parser, ASTNode *callee)
 	// int64_t current = s->tell(s);
 	size_t cap = 32;
 	n->callee = callee;
-	n->arguments = new(parser->temp, ASTNode, cap);
+	n->arguments = new(parser->temp, ASTNodePtr, cap);
 	// n->arguments = malloc(sizeof(ASTNode*) * cap);
 	size_t nargs = 0;
 	if(parser->token.type != ')')
@@ -418,7 +418,7 @@ ASTNode *nud_group(Parser *parser, Token *token)
 	{
 		NODE(VectorExpr, vec);
 		// vec->elements = malloc(sizeof(ASTNode *) * 3);
-		vec->elements = new(parser->temp, ASTNode, 3);
+		vec->elements = new(parser->temp, ASTNodePtr, 3);
 		vec->elements[0] = expr;
 		for(size_t i = 1; i < 3; ++i)
 		{
