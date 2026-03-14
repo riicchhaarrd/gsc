@@ -816,10 +816,13 @@ IMPL_VISIT(ASTIdentifier)
 		entry = hash_trie_upsert(c->globals, n->name, NULL, false);
 	if(!entry)
 	{
-		entry = hash_trie_upsert(&c->variables, lowercase(c, n->name), NULL, false);
-		if(!entry)
-			error(c, "No variable '%s'", n->name);
-		emit4(c, OP_LOAD, integer(*(int *)entry->value), NONE, NONE, NONE);
+		//entry = hash_trie_upsert(&c->variables, lowercase(c, n->name), NULL, false);
+		//if(!entry)
+		//	error(c, "No variable '%s'", n->name);
+		//emit4(c, OP_LOAD, integer(*(int *)entry->value), NONE, NONE, NONE);
+		// Create the local implicitly and default it to undefined
+		int idx = define_local_variable(c, n->name, false);
+		emit4(c, OP_LOAD, integer(idx), NONE, NONE, NONE);
 	}
 	else
 	{
