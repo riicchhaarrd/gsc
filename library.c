@@ -803,6 +803,26 @@ DEFINE_GSC_TO_FUNC(int, int64_t, vm_cast_int)
 DEFINE_GSC_TO_FUNC(float, float, vm_cast_float)
 DEFINE_GSC_TO_FUNC(string, const char*, vm_cast_string)
 
+GSC_API void gsc_notify(gsc_Context *ctx, int obj_index, const char *key, int nargs)
+{
+	VM *vm = ctx->vm;
+	Thread *thr = vm->thread;
+	Variable *ov = vm_stack(vm, obj_index);
+	if(ov->type != VAR_OBJECT)
+		vm_error(vm, "'%s' is not an object", variable_type_names[ov->type]);
+	Object *o = ov->u.oval;
+	Variable args[VM_MAX_EVENT_ARGS];
+	int count = nargs;
+	if(count > VM_MAX_EVENT_ARGS)
+		count = VM_MAX_EVENT_ARGS;
+	/* read pushed args from top of stack (oldest first) */
+	for(int i = 0; i < count; ++i)
+		args[i] = thr->stack[thr->sp - count + i];
+	/* pop them */
+	thr->sp -= count;
+	vm_notify_args(vm, o, key, args, count);
+}
+
 GSC_API gsc_Ref gsc_ref(gsc_Context *ctx, int stack_index)
 {
 	VM *vm = ctx->vm;

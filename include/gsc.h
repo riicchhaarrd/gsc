@@ -166,6 +166,8 @@ extern "C"
 	GSC_API int gsc_get_global(gsc_Context *ctx, const char *name);
 	GSC_API void gsc_set_global(gsc_Context *ctx, const char *name);
 
+	GSC_API void gsc_notify(gsc_Context *ctx, int obj_index, const char *key, int nargs);
+
 	// Reference registry — C code holds durable gsc_Ref handles to VM values.
 	// The VM tracks ownership — objects stay alive while a ref is held.
 	GSC_API gsc_Ref gsc_ref(gsc_Context *ctx, int stack_index);
