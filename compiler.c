@@ -609,7 +609,7 @@ static void identifier(Compiler *c, ASTNode *n)
 	else
 	{
 		// emit2(c, OP_GLOBAL, string(c, n->ast_identifier_data.name), integer(1));
-		property(c, n, '.');
+		property(c, (ASTNode*)n, '.');
 		emit1(c, OP_GLOBAL, integer(1));
 		emit(c, OP_FIELD_REF);
 	}
@@ -824,7 +824,7 @@ IMPL_VISIT(ASTIdentifier)
 	else
 	{
 		// emit2(c, OP_GLOBAL, string(c, n->name), integer(0));
-		property(c, n, '.');
+		property(c, (ASTNode*)n, '.');
 		emit1(c, OP_GLOBAL, integer(0));
 		emit(c, OP_LOAD_FIELD);
 	}
