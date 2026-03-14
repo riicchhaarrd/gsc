@@ -683,10 +683,14 @@ GSC_API int gsc_call_method(gsc_Context *ctx, const char *namespace, const char 
 GSC_API int gsc_call(gsc_Context *state, const char *namespace, const char *function, int nargs)
 {
 	CHECK_ERROR(state);
-	//TODO: handle args
 	CHECK_OOM(state);
+	if(!get_function(state, namespace, function))
+	{
+		gsc_pop(state, nargs);
+		return GSC_NOT_FOUND;
+	}
 	vm_call_function_thread(state->vm, namespace, function, nargs, NULL);
-	return GSC_OK; // TODO: FIXME
+	return GSC_OK;
 }
 
 GSC_API int gsc_push_object(gsc_Context *state, void *object)
