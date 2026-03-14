@@ -48,6 +48,15 @@ extern "C"
 	};
 
 	typedef struct gsc_Context gsc_Context;
+
+	/* Opaque handle for C-held references to VM values.
+	   The VM tracks ownership — objects stay alive while a ref is held.
+	   Compare with GSC_NOREF to check validity. */
+	typedef int gsc_Ref;
+	#define GSC_NOREF ((gsc_Ref)-1)
+
+	#define GSC_DEFAULT_REF_CAPACITY 256
+
 	typedef struct
 	{
 		void *(*allocate_memory)(void *ctx, int size);							// Allocate memory of specified size
@@ -60,6 +69,7 @@ extern "C"
 		int string_table_memory_size;
 		const char *default_self;
 		int max_threads;
+		int ref_capacity;  // Max number of C-held refs (0 = GSC_DEFAULT_REF_CAPACITY)
 	} gsc_CreateOptions;
 
 	GSC_API gsc_Context *gsc_create(gsc_CreateOptions options);
@@ -155,6 +165,14 @@ extern "C"
 
 	GSC_API int gsc_get_global(gsc_Context *ctx, const char *name);
 	GSC_API void gsc_set_global(gsc_Context *ctx, const char *name);
+
+	GSC_API void gsc_notify(gsc_Context *ctx, int obj_index, const char *key, int nargs);
+
+	// Reference registry — C code holds durable gsc_Ref handles to VM values.
+	// The VM tracks ownership — objects stay alive while a ref is held.
+	GSC_API gsc_Ref gsc_ref(gsc_Context *ctx, int stack_index);
+	GSC_API void    gsc_push_ref(gsc_Context *ctx, gsc_Ref ref);
+	GSC_API void    gsc_unref(gsc_Context *ctx, gsc_Ref ref);
 
 	// This function may break
 	GSC_API void *gsc_get_internal_pointer(gsc_Context *ctx, const char *tag);
