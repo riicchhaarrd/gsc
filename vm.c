@@ -1696,7 +1696,8 @@ bool vm_execute_instruction(VM *vm, Instruction *ins)
 			int idx = vm_string_index(vm, key);
 			if(idx == -1)
 				vm_error(vm, "endon: key '%s' not found", key);
-			if(thr->endon_string_count < VM_MAX_ENDON_STRINGS)
+			if(thr->endon_string_count >= VM_MAX_ENDON_STRINGS)
+				vm_error(vm, "endon: too many endon strings (%d)", VM_MAX_ENDON_STRINGS);
 				thr->endon[thr->endon_string_count++] = idx;
 			push(vm, undef);
 		}
