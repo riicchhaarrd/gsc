@@ -244,6 +244,7 @@ static void visit_(Compiler* c, ASTNode *n)
 	{
 		error(c, "Node is null");
 	}
+	c->node = n;
 	ast_visitors[n->type](c, n);
 }
 #define visit(x) visit_(c, x)

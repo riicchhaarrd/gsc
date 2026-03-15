@@ -134,13 +134,14 @@ enum { sizeof_Variable = sizeof(Variable) };
 #pragma pack(push, 8)
 typedef struct
 {
-    Variable *locals[VM_MAX_LOCALS]; // TODO: FIXME
+    Variable *locals[VM_MAX_LOCALS];
     int local_count;
     Instruction *instructions;
     int instruction_count;
     const char *file, *function;
+    const char *source;
+    char **variable_names;
     int ip;
-    // Variable self;
 } StackFrame;
 #pragma pack(pop)
 enum { sizeof_StackFrame = sizeof(StackFrame) };

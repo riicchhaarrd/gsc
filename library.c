@@ -34,6 +34,13 @@ CompiledFile *compile(gsc_Context *state, const char *path, const char *data, in
 	CompiledFile *cf = find_or_create_compiled_file(state, path);
 	if(cf->state != COMPILE_STATE_NOT_STARTED)
 		return cf;
+	if(data)
+	{
+		size_t len = strlen(data);
+		char *src = new(&state->perm, char, len + 1);
+		memcpy(src, data, len + 1);
+		cf->source = src;
+	}
 	int status = compile_file(path, data, cf, &state->perm, temp, &state->strtab, flags, globals);
 	cf->state = status == 0 ? COMPILE_STATE_DONE : COMPILE_STATE_FAILED;
 	if(cf->state != COMPILE_STATE_DONE)

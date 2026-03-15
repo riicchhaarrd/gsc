@@ -138,6 +138,7 @@ typedef struct
 	HashTrie includes;
 	HashTrie file_references;
 	int state;
+	const char *source;
 } CompiledFile;
 
 typedef struct
