@@ -120,80 +120,7 @@ static CompiledFunction *vm_func_lookup(void *ctx, const char *file, const char 
 	return get_function(state, file, function);
 }
 
-static int f_endon(gsc_Context *ctx)
-{
-	VM *vm = ctx->vm;
-	Object *self = vm_cast_object(ctx->vm, vm_argv(ctx->vm, -1));
-	const char *key = vm_checkstring(vm, 0);
-	Thread *thr = vm_thread(vm);
-	int idx = vm_string_index(vm, key);
-	if(thr->endon_string_count >= VM_MAX_ENDON_STRINGS)
-		vm_error(ctx->vm, "Max endon string count (%d) reached", VM_MAX_ENDON_STRINGS);
-	thr->endon[thr->endon_string_count++] = idx;
-	// buf_push(thr->endon, idx);
-	return 0;
-}
-
-// TODO: wait for animation event / notetracks
-// Hack: prefix with anim_ and notify when animation is done / encounters a notetrack
-
-static int f_waittillmatch(gsc_Context *ctx)
-{
-	VM *vm = ctx->vm;
-	Object *self = vm_cast_object(ctx->vm, vm_argv(ctx->vm, -1));
-	const char *key = vm_checkstring(vm, 0);
-	char fake_key[256];
-	snprintf(fake_key, sizeof(fake_key), "$nt_%s", key);
-	Thread *thr = vm_thread(vm);
-	thr->state = VM_THREAD_WAITING_EVENT;
-
-	for(int i = 1; i < vm_argc(vm); i++)
-	{
-		Variable arg = *vm_argv(vm, i);
-		if(arg.type != VAR_REFERENCE)
-		{
-			vm_error(vm, "Expected reference for waittillmatch");
-		}
-		thr->waittill.arguments[i - 1] = arg;
-	}
-	thr->waittill.numargs = vm_argc(vm) - 1;
-
-	thr->waittill.name = vm_string_index(vm, fake_key);
-	thr->waittill.object = self;
-	if(thr->waittill.name == -1)
-	{
-		vm_error(vm, "Key '%s' not found", fake_key);
-	}
-	return 0;
-}
-
-static int f_waittill(gsc_Context *ctx)
-{
-	VM *vm = ctx->vm;
-	Object *self = vm_cast_object(ctx->vm, vm_argv(ctx->vm, -1));
-	const char *key = vm_checkstring(vm, 0);
-	Thread *thr = vm_thread(vm);
-	thr->state = VM_THREAD_WAITING_EVENT;
-	// thr->waittill.arguments = NULL;
-	for(int i = 1; i < vm_argc(vm); i++)
-	{
-		Variable arg = *vm_argv(vm, i);
-		if(arg.type != VAR_REFERENCE)
-		{
-			vm_error(vm, "Expected reference for waittill");
-		}
-		thr->waittill.arguments[i - 1] = arg;
-	}
-	thr->waittill.numargs = vm_argc(vm) - 1;
-	thr->waittill.name = vm_string_index(vm, key);
-	thr->waittill.object = self;
-	if(thr->waittill.name == -1)
-	{
-		vm_error(vm, "Key '%s' not found", key);
-	}
-	// printf("[VM] TODO implement waittill: %s\n", key);
-	return 0;
-}
+/* waittill/endon/waittillmatch are now OP_WAITTILL/OP_ENDON opcodes. */
 
 static int f_notify(gsc_Context *ctx)
 {
@@ -282,14 +209,8 @@ static void create_default_object_proxy(gsc_Context *ctx)
 	// ctx->vm->globals[VAR_GLOB_GAME].u.oval->proxy = ctx->default_object_proxy;
 
 	int methods = gsc_add_object(ctx);
-		gsc_add_function(ctx, f_waittill);
-		gsc_object_set_field(ctx, methods, "waittill");
-		gsc_add_function(ctx, f_endon);
-		gsc_object_set_field(ctx, methods, "endon");
 		gsc_add_function(ctx, f_notify);
 		gsc_object_set_field(ctx, methods, "notify");
-		gsc_add_function(ctx, f_waittillmatch);
-		gsc_object_set_field(ctx, methods, "waittillmatch");
 	gsc_object_set_field(ctx, proxy, "__call");
 
 	gsc_set_global(ctx, "object");

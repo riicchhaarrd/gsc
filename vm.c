@@ -1630,6 +1630,69 @@ bool vm_execute_instruction(VM *vm, Instruction *ins)
 		}
 		break;
 
+		case OP_WAITTILL:
+		{
+			int nargs = read_int(vm, ins, 0);
+			int nrefs = nargs - 1;
+			Variable objVar = pop(vm);
+			Variable nameVar = pop(vm);
+			if(objVar.type != VAR_OBJECT)
+				vm_error(vm, "waittill: '%s' is not an object", variable_type_names[objVar.type]);
+			const char *key = variable_string(vm, &nameVar);
+			int nameIdx = vm_string_index(vm, key);
+			if(nameIdx == -1)
+				vm_error(vm, "waittill: key '%s' not found", key);
+			int captureCount = nrefs < VM_MAX_EVENT_ARGS ? nrefs : VM_MAX_EVENT_ARGS;
+			for(int i = 0; i < captureCount; i++)
+			{
+				Variable ref = pop(vm);
+				if(ref.type != VAR_REFERENCE)
+					vm_error(vm, "waittill: expected reference, got %s", variable_type_names[ref.type]);
+				thr->waittill.arguments[i] = ref;
+			}
+			for(int i = captureCount; i < nrefs; i++)
+				pop(vm);
+			thr->waittill.numargs = captureCount;
+			thr->waittill.name = nameIdx;
+			thr->waittill.object = objVar.u.oval;
+			thr->state = VM_THREAD_WAITING_EVENT;
+		}
+		break;
+
+		case OP_NOTIFY:
+		{
+			int nargs = read_int(vm, ins, 0);
+			int ndata = nargs - 1;
+			Variable objVar = pop(vm);
+			Variable nameVar = pop(vm);
+			if(objVar.type != VAR_OBJECT)
+				vm_error(vm, "notify: '%s' is not an object", variable_type_names[objVar.type]);
+			Variable args[VM_MAX_EVENT_ARGS];
+			int argCount = ndata < VM_MAX_EVENT_ARGS ? ndata : VM_MAX_EVENT_ARGS;
+			for(int i = 0; i < argCount; i++)
+				args[i] = pop(vm);
+			for(int i = argCount; i < ndata; i++)
+				pop(vm);
+			const char *key = variable_string(vm, &nameVar);
+			vm_notify_args(vm, objVar.u.oval, key, args, argCount);
+		}
+		break;
+
+		case OP_ENDON:
+		{
+			int nargs = read_int(vm, ins, 0);
+			(void)nargs;
+			Variable objVar = pop(vm);
+			Variable nameVar = pop(vm);
+			const char *key = variable_string(vm, &nameVar);
+			int idx = vm_string_index(vm, key);
+			if(idx == -1)
+				vm_error(vm, "endon: key '%s' not found", key);
+			if(thr->endon_string_count < VM_MAX_ENDON_STRINGS)
+				thr->endon[thr->endon_string_count++] = idx;
+		}
+		break;
+
 		case OP_UNARY:
 		{
 			int op = read_int(vm, ins, 0);

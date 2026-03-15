@@ -900,26 +900,51 @@ IMPL_VISIT(ASTBinaryExpr)
 	}
 }
 
+static int get_thread_opcode(ASTCallExpr *n)
+{
+	if(!n->object || n->callee->type != AST_IDENTIFIER)
+		return -1;
+	const char *name = n->callee->ast_identifier_data.name;
+	if(!strcmp(name, "waittill") || !strcmp(name, "waittillmatch"))
+		return OP_WAITTILL;
+	if(!strcmp(name, "notify"))
+		return OP_NOTIFY;
+	if(!strcmp(name, "endon"))
+		return OP_ENDON;
+	return -1;
+}
+
 IMPL_VISIT(ASTCallExpr)
 {
+	int thread_op = get_thread_opcode(n);
+	if(thread_op >= 0)
+	{
+		bool pass_as_ref = (thread_op == OP_WAITTILL);
+		for(size_t i = 0; i < n->numarguments; ++i)
+		{
+			if(pass_as_ref && n->numarguments - 1 != i)
+				identifier(c, n->arguments[n->numarguments - i - 1]);
+			else
+				visit(n->arguments[n->numarguments - i - 1]);
+		}
+		visit(n->object);
+		emit2(c, thread_op, integer(n->numarguments), NONE);
+		return;
+	}
+
+	/* Regular call path */
 	bool pass_args_as_ref = false;
 	if(n->callee->type == AST_IDENTIFIER)
 	{
 		if(!strcmp(n->callee->ast_identifier_data.name, "waittill"))
-		{
 			pass_args_as_ref = true;
-		}
 	}
 	for(size_t i = 0; i < n->numarguments; ++i)
 	{
 		if(pass_args_as_ref && n->numarguments - 1 != i)
-		{
 			identifier(c, n->arguments[n->numarguments - i - 1]);
-			// lvalue(c, n->arguments[n->numarguments - i - 1]);
-		} else
-		{
+		else
 			visit(n->arguments[n->numarguments - i - 1]);
-		}
 	}
 	int call_flags = 0;
 	if(n->threaded)
@@ -929,7 +954,6 @@ IMPL_VISIT(ASTCallExpr)
 	if(n->object)
 	{
 		visit(n->object);
-		// lvalue(c, n->object);
 	}
 	else
 	{
@@ -940,7 +964,7 @@ IMPL_VISIT(ASTCallExpr)
 		}
 		else
 		{
-			emit4(c, OP_LOAD, integer(0), NONE, NONE, NONE); // put "previous" / current local variable self on stack
+			emit4(c, OP_LOAD, integer(0), NONE, NONE, NONE);
 		}
 	}
 	emit2(c, OP_PUSH, integer(AST_LITERAL_TYPE_INTEGER), integer(n->numarguments));
