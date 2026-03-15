@@ -941,6 +941,20 @@ static Variable unary(VM *vm, Variable *arg, int op)
 		}
 		break;
 
+		case VAR_STRING:
+		case VAR_INTERNED_STRING:
+		{
+			if(op == '!')
+			{
+				const char *s = variable_string(vm, arg);
+				result.type = VAR_BOOLEAN;
+				result.u.ival = (!s || !s[0]) ? 1 : 0;
+			}
+			else
+				err = true;
+		}
+		break;
+
 		default: err = true; break;
 	}
 	if(err)
