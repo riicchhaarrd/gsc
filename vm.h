@@ -153,9 +153,10 @@ typedef struct
     Object *object;
     Variable arguments[VM_MAX_EVENT_ARGS];
     int numargs;
-    int frame;
+    int active;
 } VMEvent;
-enum { sizeof_VMEvent = sizeof(VMEvent) };
+
+#define VM_MAX_EVENTS (256)
 
 typedef enum
 {
@@ -209,8 +210,6 @@ enum { sizeof_Thread = sizeof(Thread) };
 #define VM_FLAG_NONE (0)
 #define VM_FLAG_VERBOSE (1)
 
-#define VM_MAX_EVENTS_PER_FRAME (1024)
-
 struct VM
 {
     jmp_buf *jmp;
@@ -218,12 +217,13 @@ struct VM
     Thread **thread_buffer;//[VM_THREAD_POOL_SIZE];
     int thread_read_idx;
     int thread_write_idx;
-    
+
     // size_t thread_count;
     Thread *thread;
     Thread temp_thread;
-    VMEvent events[VM_MAX_EVENTS_PER_FRAME];
-    // size_t event_count;
+    VMEvent events[VM_MAX_EVENTS];
+    int event_count;
+
 	int flags;
     // Variable globals[VAR_GLOB_MAX];
     Variable global_object;

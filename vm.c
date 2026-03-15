@@ -1996,10 +1996,8 @@ void vm_init(VM *vm, Allocator *allocator, StringTable *strtab, const char *defa
 	vm->frame = 0;
 	vm->thread_buffer = allocator->malloc(allocator->ctx, sizeof(Thread*) * max_threads);
 	snprintf(vm->default_self, sizeof(vm->default_self), "%s", default_self);
-	for(int i = 0; i < VM_MAX_EVENTS_PER_FRAME; ++i)
-	{
-		vm->events[i].frame = -1;
-	}
+	memset(vm->events, 0, sizeof(vm->events));
+	vm->event_count = 0;
 	if(!uo_init(&vm->pool.uo, (1 << 16), -1, allocator))
 		vm_error(vm, "Failed to initialize union objects");
 	// variable_init(&vm->pool.variables, (1 << 19), -1, allocator);
@@ -2545,44 +2543,20 @@ static bool variable_eq(Variable *a, Variable *b)
 	return !memcmp(&a->u, &b->u, sizeof(a->u));
 }
 
-static VMEvent *get_free_event(VM *vm)
-{
-	for(int i = 0; i < VM_MAX_EVENTS_PER_FRAME; ++i)
-	{
-		if(vm->events[i].frame == -1)
-			return &vm->events[i];
-	}
-	vm_error(vm, "No free events");
-	return NULL;
-}
-
-static void free_event(VMEvent *ev)
-{
-	ev->frame = -1;
-}
-
 void vm_notify_args(VM *vm, Object *object, const char *key, const Variable *args, size_t nargs)
 {
 	int name = vm_string_index(vm, key);
 	if(name == -1)
-	{
 		vm_error(vm, "Can't find string '%s'", key);
-	}
-	printf("Notifying '%s'\n", key);
-	VMEvent *ev = get_free_event(vm);
+	if(vm->event_count >= VM_MAX_EVENTS)
+		vm_error(vm, "event overflow (%d)", VM_MAX_EVENTS);
+	VMEvent *ev = &vm->events[vm->event_count++];
 	ev->object = object;
 	ev->name = name;
+	ev->active = 1;
 	for(size_t i = 0; i < nargs && i < VM_MAX_EVENT_ARGS; ++i)
-	{
 		ev->arguments[i] = args[i];
-	}
 	ev->numargs = (int)nargs;
-	ev->frame = vm->frame;
-	// VMEvent ev = { .object = object, .name = name, .arguments = NULL };
-	// if(vm->event_count >= VM_MAX_EVENTS_PER_FRAME)
-	// 	vm_error(vm, "event_count >= VM_MAX_EVENTS_PER_FRAME");
-	// vm->events[vm->event_count++] = ev;
-	// buf_push(vm->events, ev);
 }
 
 void vm_notify(VM *vm, Object *object, const char *key, size_t nargs)
@@ -2628,18 +2602,15 @@ bool vm_run_threads(VM *vm, float dt)
 			sf = &t->frames[t->bp];
 		// printf("Processing thread %s::%s (%s)\n", sf ? sf->file : "?", sf ? sf->function : "?", vm_thread_state_names[t->state]);
 		// getchar();
-		// for(size_t j = 0; j < vm->event_count; j++)
-		for(size_t j = 0; j < VM_MAX_EVENTS_PER_FRAME; j++)
+		for(int j = 0; j < vm->event_count && t->state != VM_THREAD_INACTIVE; j++)
 		{
 			VMEvent *ev = &vm->events[j];
-			if(ev->frame == -1 || ev->frame == vm->frame)
-				continue;
+			if(!ev->active) continue;
 			for(size_t k = 0; k < t->endon_string_count; ++k)
 			{
 				if(ev->name == t->endon[k])
 				{
 					t->state = VM_THREAD_INACTIVE;
-					// printf("Thread %d killed by event '%s'\n", i, string(vm, ev->name));
 					break;
 				}
 			}
@@ -2690,12 +2661,10 @@ bool vm_run_threads(VM *vm, float dt)
 
 			case VM_THREAD_WAITING_EVENT:
 			{
-				// for(size_t j = 0; j < vm->event_count; j++)
-				for(size_t j = 0; j < VM_MAX_EVENTS_PER_FRAME; j++)
+				for(int j = 0; j < vm->event_count; j++)
 				{
 					VMEvent *ev = &vm->events[j];
-					if(ev->frame == -1 || ev->frame == vm->frame)
-						continue;
+					if(!ev->active) continue;
 					if(ev->name == t->waittill.name && ev->object == t->waittill.object)
 					{
 						int min = t->waittill.numargs;
@@ -2709,7 +2678,8 @@ bool vm_run_threads(VM *vm, float dt)
 							memcpy(&dst->u, &src->u, sizeof(dst->u));
 						}
 						t->state = VM_THREAD_ACTIVE;
-						// printf("Thread %d resumed on event '%s'\n", i, string(vm, ev->name));
+						ev->active = 0;
+						break;
 					}
 				}
 			}
@@ -2720,15 +2690,14 @@ bool vm_run_threads(VM *vm, float dt)
 			add_thread(vm, t);
 	}
 
-	for(size_t j = 0; j < VM_MAX_EVENTS_PER_FRAME; j++)
+	int write = 0;
+	for(int j = 0; j < vm->event_count; j++)
 	{
-		VMEvent *ev = &vm->events[j];
-		if(ev->frame == -1 || ev->frame == vm->frame)
-			continue;
-		free_event(ev);
+		if(vm->events[j].active)
+			vm->events[write++] = vm->events[j];
 	}
-	
-	// vm->event_count = 0; // Reset for next frame
+	vm->event_count = write;
+
 	vm->frame++;
 	return vm->thread_read_idx != vm->thread_write_idx;
 }
