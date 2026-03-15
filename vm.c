@@ -1662,6 +1662,7 @@ bool vm_execute_instruction(VM *vm, Instruction *ins)
 			thr->waittill.name = nameIdx;
 			thr->waittill.object = objVar.u.oval;
 			thr->state = VM_THREAD_WAITING_EVENT;
+			push(vm, undef);
 		}
 		break;
 
@@ -1681,6 +1682,7 @@ bool vm_execute_instruction(VM *vm, Instruction *ins)
 				pop(vm);
 			const char *key = variable_string(vm, &nameVar);
 			vm_notify_args(vm, objVar.u.oval, key, args, argCount);
+			push(vm, undef);
 		}
 		break;
 
@@ -1696,6 +1698,7 @@ bool vm_execute_instruction(VM *vm, Instruction *ins)
 				vm_error(vm, "endon: key '%s' not found", key);
 			if(thr->endon_string_count < VM_MAX_ENDON_STRINGS)
 				thr->endon[thr->endon_string_count++] = idx;
+			push(vm, undef);
 		}
 		break;
 
