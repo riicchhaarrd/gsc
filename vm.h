@@ -170,8 +170,8 @@ typedef enum
 static const char *vm_thread_state_names[] = { "INACTIVE",		"ACTIVE",		 "WAITING_TIME",
 											   "WAITING_FRAME", "WAITING_EVENT", NULL };
 
-#define VM_STACK_SIZE (64)
-#define VM_FRAME_SIZE (16)
+#define VM_STACK_SIZE (256)
+#define VM_FRAME_SIZE (32)
 // #define VM_THREAD_POOL_SIZE (2048)
 // #define VM_THREAD_POOL_SIZE (8192)
 
@@ -273,6 +273,7 @@ bool vm_call_function_thread(VM *vm, const char *file, const char *function, siz
 // bool vm_run(VM *vm, float dt);
 bool vm_run_threads(VM *vm, float dt);
 void vm_init(VM *vm, Allocator *allocator, StringTable *strtab, const char *default_self, int max_threads);
+int thread_count(VM *vm);
 void vm_cleanup(VM*);
 
 void vm_register_callback_function(VM *vm, const char *name, void *callback, void *ctx);

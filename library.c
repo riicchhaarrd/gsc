@@ -812,6 +812,16 @@ GSC_API void *gsc_get_internal_pointer(gsc_Context *state, const char *tag)
 	return NULL;
 }
 
+GSC_API int gsc_thread_count(gsc_Context *ctx)
+{
+	return thread_count(ctx->vm);
+}
+
+GSC_API int gsc_event_count(gsc_Context *ctx)
+{
+	return ctx->vm->event_count;
+}
+
 #endif
 #ifdef __cplusplus
 }

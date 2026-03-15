@@ -580,7 +580,13 @@ static int64_t pop_int(VM *vm)
 static void validate_operand_type(VM *vm, Operand *op, OperandType expected_type, const char *type_name)
 {
     if(op->type != expected_type)
-        vm_error(vm, "Operand '%s' is not a %s", operand_type_names[op->type], type_name);
+	{
+		StackFrame *sf = stack_frame(vm, vm->thread);
+		Instruction *ins = (sf->ip > 0) ? &sf->instructions[sf->ip - 1] : NULL;
+        vm_error(vm, "Operand '%s' is not a %s (opcode=%s)",
+			operand_type_names[op->type], type_name,
+			ins ? opcode_names[ins->opcode] : "?");
+	}
 }
 
 static int64_t read_int(VM *vm, Instruction *ins, size_t idx)
