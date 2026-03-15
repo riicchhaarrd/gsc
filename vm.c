@@ -1415,14 +1415,6 @@ bool vm_execute_instruction(VM *vm, Instruction *ins)
 
 		case OP_JMP:
 		{
-			if(!check_operand(ins, 0, OPERAND_TYPE_INT))
-			{
-				fprintf(stderr, "  \033[1;33mwarn\033[0m: unpatched JMP at %s::%s:%d (ip=%d)\n",
-					sf->file ? sf->file : "?",
-					sf->function ? sf->function : "?",
-					ins->line, sf->ip - 1);
-				break;
-			}
             int rel = read_int(vm, ins, 0);
 			sf->ip += rel;
 			ASSERT_STACK(0);
@@ -1437,14 +1429,6 @@ bool vm_execute_instruction(VM *vm, Instruction *ins)
 
 		case OP_JZ:
 		{
-			if(!check_operand(ins, 0, OPERAND_TYPE_INT))
-			{
-				fprintf(stderr, "  \033[1;33mwarn\033[0m: unpatched JZ at %s::%s:%d (ip=%d)\n",
-					sf->file ? sf->file : "?",
-					sf->function ? sf->function : "?",
-					ins->line, sf->ip - 1);
-				break;
-			}
             int rel = read_int(vm, ins, 0);
 			if(thr->result == 0)
 			{
@@ -1666,14 +1650,6 @@ bool vm_execute_instruction(VM *vm, Instruction *ins)
 
 		case OP_JNZ:
 		{
-			if(!check_operand(ins, 0, OPERAND_TYPE_INT))
-			{
-				fprintf(stderr, "  \033[1;33mwarn\033[0m: unpatched JNZ at %s::%s:%d (ip=%d)\n",
-					sf->file ? sf->file : "?",
-					sf->function ? sf->function : "?",
-					ins->line, sf->ip - 1);
-				break;
-			}
             int rel = read_int(vm, ins, 0);
 			if(thr->result != 0)
 			{

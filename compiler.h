@@ -17,18 +17,22 @@ struct Node
 {
     Node *next;
     void *data;
-    // char data[];
 };
+
+typedef enum { JUMP_BREAK, JUMP_CONTINUE } JumpKind;
+typedef struct { size_t ip; int scope; JumpKind kind; } PendingJump;
+
+#define MAX_PENDING_JUMPS (1024)
+
 typedef struct
 {
-	Node *continue_list;
-	Node *break_list;
 	ASTNode *node;
+	int allows_break;     /* switch, for, while */
+	int allows_continue;  /* for, while (not switch) */
 } Scope;
 
 #define COMPILER_MAX_SCOPES (32)
 
-// typedef struct VMFunction VMFunction;
 typedef struct
 {
 	size_t variable_index;
@@ -43,6 +47,9 @@ typedef struct
 	StringTable *strings;
 	Scope scopes[COMPILER_MAX_SCOPES];
 	size_t current_scope;
+
+	PendingJump jumps[MAX_PENDING_JUMPS];
+	int jump_count;
 	// Makes debugging easier, set source if we still have source available and node to the statement for line number information
 	// const char *source;
 	ASTNode *node;

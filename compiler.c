@@ -130,7 +130,9 @@ static size_t emit_base(Compiler *c, Opcode op)
 	Instruction *instr = &c->instructions[c->instruction_count];
 	instr->opcode = op;
 	instr->offset = c->instruction_count;
-	instr->line = c->node->line;
+	instr->line = c->node ? c->node->line : 0;
+	if(op == OP_JMP || op == OP_JZ || op == OP_JNZ)
+		instr->operands[0] = integer(-1);  /* patched later; -1 = unresolved */
 	c->instruction_count++;
 	return instr->offset;
 }
@@ -173,60 +175,67 @@ static void patch_reljmp(Compiler *c, size_t ins)
 	int destination = ip(c);
 	int current = c->instructions[ins].offset;
 	c->instructions[ins].operands[0] = integer(destination - current - 1);
+	// printf("  PATCH %s at ip=%zu -> dest=%d (rel=%d)\n",
+	//     opcode_names[c->instructions[ins].opcode], ins, destination, destination - current - 1);
 }
 
-static void increment_scope(Compiler *c, ASTNode *node, Node *prev_continue_list)
+static void increment_scope(Compiler *c, ASTNode *node, int allows_break, int allows_continue)
 {
 	if(c->current_scope >= COMPILER_MAX_SCOPES)
-	{
 		error(c, "Max scope reached");
-	}
 	c->current_scope++;
 	Scope *scope = current_scope(c);
 	scope->node = node;
-	// scope->arena = c->arena;
-	scope->break_list = NULL;
-	scope->continue_list = prev_continue_list ? prev_continue_list : NULL;
+	scope->allows_break = allows_break;
+	scope->allows_continue = allows_continue;
+}
+
+static void emit_break(Compiler *c)
+{
+	if(c->jump_count >= MAX_PENDING_JUMPS)
+		error(c, "Too many pending jumps");
+	PendingJump *j = &c->jumps[c->jump_count++];
+	j->ip = emit_base(c, OP_JMP);
+	j->scope = c->current_scope;
+	j->kind = JUMP_BREAK;
+}
+
+static void emit_continue(Compiler *c)
+{
+	if(c->jump_count >= MAX_PENDING_JUMPS)
+		error(c, "Too many pending jumps");
+	PendingJump *j = &c->jumps[c->jump_count++];
+	j->ip = emit_base(c, OP_JMP);
+	j->scope = c->current_scope;
+	j->kind = JUMP_CONTINUE;
 }
 
 static void decrement_scope(Compiler *c, int continue_offset, int break_offset)
 {
+	int scope_level = c->current_scope;
 	Scope *scope = current_scope(c);
 
-	// Patch all breaks and continue statement jumps
-
-	LIST_FOREACH(Node, scope->break_list, it)
+	/* Patch all pending jumps at or below this scope level */
+	for(int i = 0; i < c->jump_count; i++)
 	{
-		size_t *offset = it->data;
-		Instruction *ins = &c->instructions[*offset];
+		PendingJump *j = &c->jumps[i];
+		if(j->ip == (size_t)-1) continue; /* already patched */
+		if(j->scope < scope_level) continue; /* belongs to parent */
 
-		ins->operands[0] = integer(break_offset - *offset - 1);
-	}
-	if(continue_offset != -1)
-	{
-		LIST_FOREACH(Node, scope->continue_list, it)
+		if(j->kind == JUMP_BREAK && scope->allows_break)
 		{
-			size_t *offset = it->data;
-			Instruction *ins = &c->instructions[*offset];
-
-			ins->operands[0] = integer(continue_offset - *offset - 1);
+			c->instructions[j->ip].operands[0] = integer(break_offset - (int)j->ip - 1);
+			j->ip = (size_t)-1;
 		}
-	} else
-	{
-		Scope *prev_scope = previous_scope(c);
-		if(prev_scope)
+		else if(j->kind == JUMP_CONTINUE && scope->allows_continue && continue_offset != -1)
 		{
-			prev_scope->continue_list = scope->continue_list;
-		}
-		else
-		{
-			error(c, "continue cannot be used in this context");
+			c->instructions[j->ip].operands[0] = integer(continue_offset - (int)j->ip - 1);
+			j->ip = (size_t)-1;
 		}
 	}
+
 	if(c->current_scope-- <= 0)
-	{
 		error(c, "Scope error");
-	}
 }
 
 typedef void (*VisitorFn)(Compiler *, void *);
@@ -317,19 +326,11 @@ static void visit_ASTFileReference_(Compiler *c, ASTFileReference *n)
 }
 static void visit_ASTBreakStmt_(Compiler *c, ASTBreakStmt *n)
 {
-	Scope *scope = current_scope(c);
-	Node *break_entry = node(c, &scope->break_list);
-	size_t *jmp = new(c->arena, size_t, 1);
-	*jmp = emit(c, OP_JMP);
-	break_entry->data = jmp;
+	emit_break(c);
 }
 static void visit_ASTContinueStmt_(Compiler *c, ASTContinueStmt *n)
 {
-	Scope *scope = current_scope(c);
-	Node *continue_entry = node(c, &scope->continue_list);
-	size_t *jmp = new(c->arena, size_t, 1);
-	*jmp = emit(c, OP_JMP);
-	continue_entry->data = jmp;
+	emit_continue(c);
 }
 static void visit_ASTDoWhileStmt_(Compiler *c, ASTDoWhileStmt *n)
 {
@@ -395,7 +396,7 @@ IMPL_VISIT(ASTReturnStmt)
 
 IMPL_VISIT(ASTWhileStmt)
 {
-	increment_scope(c, (ASTNode*)n, NULL);
+	increment_scope(c, (ASTNode*)n, 1, 1);
 	int loop_begin = ip(c);
 	if(n->test)
 	{
@@ -649,8 +650,7 @@ static void lvalue(Compiler *c, ASTNode *n)
 
 IMPL_VISIT(ASTSwitchStmt)
 {
-	Scope *prev_scope = previous_scope(c);
-	increment_scope(c, (ASTNode*)n, prev_scope ? prev_scope->continue_list : NULL);
+	increment_scope(c, (ASTNode*)n, 1, 0); /* break yes, continue no (bubbles up) */
 
 	ASTSwitchCase *default_case = NULL;
 	size_t case_jnz[256]; // TODO: increase limit
@@ -714,7 +714,7 @@ IMPL_VISIT(ASTForStmt)
 		visit(n->init);
 		emit(c, OP_POP);
 	}
-	increment_scope(c, (ASTNode*)n, NULL);
+	increment_scope(c, (ASTNode*)n, 1, 1);
 	int loop_begin = ip(c);
 	if(n->test)
 	{
@@ -724,7 +724,7 @@ IMPL_VISIT(ASTForStmt)
 	{
 		emit(c, OP_CONST_1);
 	}
-	
+
 	emit(c, OP_TEST);
 	size_t jz = emit(c, OP_JZ);
 
@@ -1070,6 +1070,7 @@ int compile_function(Compiler *c, Arena *perm, Arena temp, ASTFunction *n, int *
 	c->current_scope = 0;
 	c->instruction_count = 0;
 	c->max_instruction_count = MAX_INSTRUCTIONS;
+	c->jump_count = 0;
 
 	// debug_info_node(c, (ASTNode*)n);
 	c->node = (ASTNode*)n;
@@ -1093,6 +1094,17 @@ int compile_function(Compiler *c, Arena *perm, Arena temp, ASTFunction *n, int *
 		char *str = new(perm, char, len);
 		memcpy(str, it->key, len);
 		cf->variable_names[idx++] = str;
+	}
+	for(int i = 0; i < c->instruction_count; i++)
+	{
+		Instruction *ins = &c->instructions[i];
+		if((ins->opcode == OP_JMP || ins->opcode == OP_JZ || ins->opcode == OP_JNZ)
+			&& ins->operands[0].value.integer == -1)
+		{
+			fprintf(stderr, "  \033[1;33mwarn\033[0m[compiler]: unresolved %s in %s::%s line %d (ip=%d)\n",
+				opcode_names[ins->opcode], c->path, n->name, ins->line, i);
+			ins->operands[0] = integer(0);
+		}
 	}
 	c->arena = NULL;
 	return c->instruction_count;
